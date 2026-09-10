@@ -69,3 +69,10 @@ def test_guard_rail_rejects_a_large_drop():
 
 def test_guard_rail_allows_a_small_drop():
     check_guard_rail(fetched_count=700, last_good_count=713)
+
+
+def test_guard_rail_boundary_is_exactly_seventy_percent():
+    """Pin the boundary itself - every other test is far from it."""
+    check_guard_rail(fetched_count=700, last_good_count=1000)  # exactly 70%
+    with pytest.raises(GuardRailError):
+        check_guard_rail(fetched_count=699, last_good_count=1000)

@@ -25,6 +25,13 @@ class SyncDiff:
 
 
 def diff_events(stored: dict[str, str], fetched: list[Event]) -> SyncDiff:
+    """Compare a fetched schedule against stored row hashes.
+
+    Assumes `fetched` holds distinct gt_ids - the real payload does (713
+    events, 713 distinct ids, verified 2026-09-10). A duplicated id would be
+    counted twice here, inflating the report's numbers; it would not corrupt
+    the store, since upsert_events is idempotent per id.
+    """
     diff = SyncDiff()
     seen: set[str] = set()
 
