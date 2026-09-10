@@ -1,0 +1,50 @@
+{
+  "event_id": "21401",
+  "event_name": "PAX West 2026",
+  "event_slug": "PAX_West_2026",
+  "schedules": [
+    {
+      "id": "1",
+      "title": "Good Event",
+      "description": "Fine.",
+      "start_time": "2026-09-04 11:30:00",
+      "end_time": "2026-09-04 12:30:00",
+      "no_end_time": null,
+      "location": "Room A",
+      "venue_location": { "id": "1", "name": "Room A" },
+      "schedule_categories": [{ "id": "1", "name": "Panels" }]
+    },
+    {
+      "id": "2",
+      "title": "Unparseable Start",
+      "description": "",
+      "start_time": "not a timestamp",
+      "end_time": "2026-09-04 12:30:00",
+      "no_end_time": null,
+      "location": "Room B",
+      "venue_location": { "id": "2", "name": "Room B" },
+      "schedule_categories": []
+    },
+    {
+      "id": "3",
+      "title": "",
+      "description": "",
+      "start_time": "2026-09-04 11:30:00",
+      "end_time": "2026-09-04 12:30:00",
+      "no_end_time": null,
+      "location": "Room C",
+      "venue_location": { "id": "3", "name": "Room C" },
+      "schedule_categories": []
+    },
+    {
+      "title": "No Id At All",
+      "description": "",
+      "start_time": "2026-09-04 11:30:00",
+      "end_time": "2026-09-04 12:30:00",
+      "no_end_time": null,
+      "location": "Room D",
+      "venue_location": { "id": "4", "name": "Room D" },
+      "schedule_categories": []
+    }
+  ]
+}

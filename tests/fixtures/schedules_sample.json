@@ -1,0 +1,79 @@
+{
+  "event_id": "21401",
+  "event_name": "PAX West 2026",
+  "event_slug": "PAX_West_2026",
+  "schedules": [
+    {
+      "id": "943694",
+      "title": "Can't Stop",
+      "description": "Max of 16 players. 4 Player Games, Two Round Single Elimination.",
+      "start_time": "2026-09-04 11:30:00",
+      "end_time": "2026-09-04 15:00:00",
+      "no_end_time": false,
+      "location": "Tabletop Tourney (LVL 2)",
+      "venue_location": { "id": "75271", "name": "Tabletop Tourney (LVL 2)" },
+      "schedule_categories": [
+        { "id": "20493", "name": "Tabletop" },
+        { "id": "20079", "name": "Tabletop Tournaments" },
+        { "id": "20078", "name": "Tournaments" }
+      ]
+    },
+    {
+      "id": "943678",
+      "title": "Crokinole & Klask - Open Play",
+      "description": "Play two of the world's greatest dexterity games.<br /><br />Boards available.",
+      "start_time": "2026-09-04 10:00:00",
+      "end_time": "2026-09-04 23:30:00",
+      "no_end_time": null,
+      "location": "Crokinole &amp; KLASK Zone (LVL 0)",
+      "venue_location": { "id": "75267", "name": "Crokinole &amp; KLASK Zone (LVL 0)" },
+      "schedule_categories": [
+        { "id": "20532", "name": "Dexterity Games" },
+        { "id": "20493", "name": "Tabletop" }
+      ]
+    },
+    {
+      "id": "945852",
+      "title": "Games On Demand (Indie TTRPGs)",
+      "description": "This is the place to play indie tabletop RPGs!",
+      "start_time": "2026-09-04 10:00:00",
+      "end_time": "2026-09-04 23:45:00",
+      "no_end_time": false,
+      "location": "Tabletop RPG (LVL 0)",
+      "venue_location": { "id": "75379", "name": "Tabletop RPG (LVL 0)" },
+      "schedule_categories": [
+        { "id": "20489", "name": "Age 13+" },
+        { "id": "20493", "name": "Tabletop" },
+        { "id": "20627", "name": "TTRPGs" }
+      ]
+    },
+    {
+      "id": "949290",
+      "title": "Turbo Golf Racing",
+      "description": "",
+      "start_time": "2026-09-04 12:00:00",
+      "end_time": "2026-09-04 14:00:00",
+      "no_end_time": null,
+      "location": "PC Tourney (Summit, Level 0)",
+      "venue_location": { "id": "75529", "name": "PC Tourney (Summit, Level 0)" },
+      "schedule_categories": [
+        { "id": "20078", "name": "Tournaments" },
+        { "id": "20746", "name": "Video Gaming (PC, HH, Console)" }
+      ]
+    },
+    {
+      "id": "943681",
+      "title": "Crokinole & Klask - Open Play",
+      "description": "Sunday session.",
+      "start_time": "2026-09-07 10:00:00",
+      "end_time": "2026-09-07 18:00:00",
+      "no_end_time": false,
+      "location": "Crokinole &amp; KLASK Zone (LVL 0)",
+      "venue_location": { "id": "75267", "name": "Crokinole &amp; KLASK Zone (LVL 0)" },
+      "schedule_categories": [
+        { "id": "20532", "name": "Dexterity Games" },
+        { "id": "20493", "name": "Tabletop" }
+      ]
+    }
+  ]
+}
