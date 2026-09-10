@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Iterable
 
 from paxbot.models import Event
@@ -34,7 +34,13 @@ def _categories(conn, show_slug: str, gt_id: str) -> tuple[str, ...]:
 
 
 def upsert_events(conn: sqlite3.Connection, events: Iterable[Event]) -> None:
-    now = datetime.now().astimezone().isoformat()
+    """Insert or update events and replace their categories.
+
+    Must be called inside `transaction()`. The connection is in autocommit
+    mode, so calling this bare would commit each statement independently,
+    leaving a window where an event has no categories at all.
+    """
+    now = datetime.now(UTC).isoformat()
     for event in events:
         conn.execute(
             """

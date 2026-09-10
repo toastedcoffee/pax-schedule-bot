@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from paxbot.models import Event
-from paxbot.store.db import connect, transaction
+from paxbot.store.db import TransactionError, connect, transaction
 from paxbot.store.events import (
     event_count,
     events_for_day,
@@ -102,6 +102,14 @@ def test_events_for_day_filters_by_category(conn):
         ])
     got = events_for_day(conn, "west", date(2026, 9, 4), category="Tabletop")
     assert [e.gt_id for e in got] == ["2"]
+
+
+def test_nested_transaction_is_refused(conn):
+    """Nesting would let an inner block commit work the outer means to undo."""
+    with pytest.raises(TransactionError):
+        with transaction(conn):
+            with transaction(conn):
+                pass
 
 
 def test_transaction_rolls_back_on_error(conn):
