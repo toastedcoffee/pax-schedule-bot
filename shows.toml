@@ -1,0 +1,10 @@
+[defaults]
+drop_in_threshold_minutes = 240
+
+[shows.west]
+name       = "PAX West 2026"
+base_url   = "https://west.paxsite.com"
+api_key    = "b0c56126-dbbd-4cee-a027-42f7b2c2a2d0"
+timezone   = "America/Los_Angeles"
+start_date = 2026-09-04
+end_date   = 2026-09-07
