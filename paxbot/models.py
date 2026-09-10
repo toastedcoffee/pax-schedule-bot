@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -13,9 +14,17 @@ def compute_row_hash(
     location: str,
     categories: tuple[str, ...],
 ) -> str:
-    """Hash the user-visible fields, so sync can name what actually changed."""
-    payload = "|".join(
-        [title, starts_at_iso, ends_at_iso, location, ",".join(sorted(categories))]
+    """Hash the user-visible fields, so sync can name what actually changed.
+
+    Encoded as JSON rather than delimiter-joined: real PAX titles contain
+    "|" (every Magic: The Gathering event) and at least one real category
+    contains "," ("Video Gaming (PC, HH, Console)"). A delimiter that can
+    appear inside the data lets field boundaries shift, so two different
+    events can flatten to the same payload and hash identically.
+    """
+    payload = json.dumps(
+        [title, starts_at_iso, ends_at_iso, location, sorted(categories)],
+        ensure_ascii=False,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

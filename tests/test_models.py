@@ -52,3 +52,23 @@ def test_row_hash_changes_when_location_changes():
     a = compute_row_hash("T", "s", "e", "Room 1", ("A",))
     b = compute_row_hash("T", "s", "e", "Room 2", ("A",))
     assert a != b
+
+
+def test_row_hash_is_unambiguous_when_a_field_contains_a_pipe():
+    """32 of 713 real PAX titles contain "|". These two collide under a
+    "|"-joined payload: both flatten to
+    'Magic: The Gathering|The Hobbit|2026-09-04T18:30:00+00:00|e|Room|X'."""
+    a = compute_row_hash(
+        "Magic: The Gathering|The Hobbit", "2026-09-04T18:30:00+00:00", "e", "Room", ("X",)
+    )
+    b = compute_row_hash(
+        "Magic: The Gathering", "The Hobbit|2026-09-04T18:30:00+00:00", "e", "Room", ("X",)
+    )
+    assert a != b
+
+
+def test_row_hash_distinguishes_one_comma_category_from_two_categories():
+    """A ","-joined category list cannot tell these apart."""
+    a = compute_row_hash("T", "s", "e", "Room", ("Tabletop,Tournaments",))
+    b = compute_row_hash("T", "s", "e", "Room", ("Tabletop", "Tournaments"))
+    assert a != b
