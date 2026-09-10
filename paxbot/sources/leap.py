@@ -52,7 +52,14 @@ def fetch_schedules(show: Show, client: httpx.Client | None = None) -> dict:
     except ValueError as exc:
         raise LeapError(f"LEAP response was not JSON: {exc}") from exc
 
-    if not isinstance(payload, dict) or "schedules" not in payload:
-        raise LeapError("LEAP payload has no 'schedules' key")
+    schedules = payload.get("schedules") if isinstance(payload, dict) else None
+    if not isinstance(schedules, list):
+        # Key-presence alone is not enough: {"schedules": null} and
+        # {"schedules": "oops"} both have the key, and both escape this layer
+        # to blow up in the parser as an unlabelled TypeError/AttributeError.
+        # Fail here, where the error can name the API.
+        raise LeapError(
+            f"LEAP payload 'schedules' is {type(schedules).__name__}, expected list"
+        )
 
     return payload

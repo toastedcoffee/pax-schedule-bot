@@ -68,3 +68,36 @@ def test_missing_schedules_key_raises_leap_error():
     with pytest.raises(LeapError) as exc:
         fetch_schedules(WEST, client=client_returning(handler))
     assert "schedules" in str(exc.value)
+
+
+@pytest.mark.parametrize("bad", [None, "oops", 42, {}])
+def test_non_list_schedules_raises_leap_error(bad):
+    """Key-presence is not enough - these reach the parser as raw TypeErrors."""
+    handler = lambda request: httpx.Response(200, json={"schedules": bad})
+    with pytest.raises(LeapError) as exc:
+        fetch_schedules(WEST, client=client_returning(handler))
+    assert "schedules" in str(exc.value)
+
+
+def test_an_injected_client_is_not_closed():
+    """Callers reuse one client across shows; closing theirs would break them."""
+    client = client_returning(lambda request: httpx.Response(200, json={"schedules": []}))
+    fetch_schedules(WEST, client=client)
+    assert not client.is_closed
+
+
+def test_a_self_created_client_is_closed(monkeypatch):
+    created = []
+
+    class TrackingClient(httpx.Client):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(
+                lambda request: httpx.Response(200, json={"schedules": []})
+            )
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+    monkeypatch.setattr(httpx, "Client", TrackingClient)
+    fetch_schedules(WEST)
+    assert len(created) == 1
+    assert created[0].is_closed
