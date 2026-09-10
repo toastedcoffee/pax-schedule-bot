@@ -107,3 +107,54 @@ def test_bad_records_are_skipped_not_fatal():
 
 def test_clean_text_handles_none():
     assert clean_text(None) == ""
+
+
+def test_entities_that_decode_into_markup_are_stripped():
+    """Unescape must happen before tag-stripping, or real tags survive."""
+    assert clean_text("Cool &lt;i&gt;Event&lt;/i&gt;") == "Cool Event"
+
+
+def test_day_is_local_date_even_when_the_utc_date_differs():
+    """The one case that actually distinguishes local from UTC.
+
+    18:00 PDT is 01:00 UTC the NEXT day. Without this, every fixture event
+    starts before 17:00 local, so day=starts_utc.date() would pass every test.
+    """
+    result = parse_schedules(load("edge_late_evening.json"), WEST)
+    event = result.events[0]
+    assert event.starts_at.date() == date(2026, 9, 5)   # UTC rolled over
+    assert event.day == date(2026, 9, 4)                # local did not
+
+
+def test_a_non_string_field_skips_only_that_record():
+    """One surprising type upstream must not lose every good record."""
+    payload = {
+        "schedules": [
+            {"id": "1", "title": 42, "description": "", "location": "R",
+             "start_time": "2026-09-04 10:00:00", "end_time": "2026-09-04 11:00:00",
+             "schedule_categories": []},
+            {"id": "2", "title": "Good", "description": "", "location": "R",
+             "start_time": "2026-09-04 10:00:00", "end_time": "2026-09-04 11:00:00",
+             "schedule_categories": []},
+        ]
+    }
+    result = parse_schedules(payload, WEST)
+    assert [e.gt_id for e in result.events] == ["2"]
+    assert len(result.skipped) == 1
+    assert result.skipped[0].raw_id == "1"
+
+
+def test_malformed_categories_skip_only_that_record():
+    payload = {
+        "schedules": [
+            {"id": "1", "title": "Bad cats", "description": "", "location": "R",
+             "start_time": "2026-09-04 10:00:00", "end_time": "2026-09-04 11:00:00",
+             "schedule_categories": ["Tabletop"]},
+            {"id": "2", "title": "Good", "description": "", "location": "R",
+             "start_time": "2026-09-04 10:00:00", "end_time": "2026-09-04 11:00:00",
+             "schedule_categories": []},
+        ]
+    }
+    result = parse_schedules(payload, WEST)
+    assert [e.gt_id for e in result.events] == ["2"]
+    assert len(result.skipped) == 1

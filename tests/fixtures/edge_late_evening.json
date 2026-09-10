@@ -1,0 +1,18 @@
+{
+  "event_id": "21401",
+  "event_name": "PAX West 2026",
+  "event_slug": "PAX_West_2026",
+  "schedules": [
+    {
+      "id": "999001",
+      "title": "Late Night Concert",
+      "description": "Runs into the evening.",
+      "start_time": "2026-09-04 18:00:00",
+      "end_time": "2026-09-04 20:00:00",
+      "no_end_time": null,
+      "location": "Main Theatre (LVL 5)",
+      "venue_location": { "id": "75100", "name": "Main Theatre (LVL 5)" },
+      "schedule_categories": [{ "id": "20100", "name": "Music" }]
+    }
+  ]
+}
