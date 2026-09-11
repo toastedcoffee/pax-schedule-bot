@@ -2,9 +2,14 @@ services:
   paxbot:
     build: .
     image: paxbot:latest
+    user: "10001:10001"
     environment:
       PAXBOT_DB: /data/paxbot.db
+      PAXBOT_CONFIG: /app/shows.toml
     volumes:
-      # On TrueNAS, point the left-hand side at a dataset,
-      # e.g. /mnt/tank/apps/paxbot/data:/data
+      # On TrueNAS point this at a dataset, e.g. /mnt/tank/apps/paxbot/data
+      # The directory must be writable by uid 10001:
+      #   mkdir -p ./data && sudo chown 10001:10001 ./data
       - ./data:/data
+      # Mounted so a new PAX convention needs no image rebuild.
+      - ./shows.toml:/app/shows.toml:ro

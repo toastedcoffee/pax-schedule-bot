@@ -106,19 +106,90 @@ def test_no_db_file_is_created_when_day_is_invalid(tmp_path):
     assert not db_path.exists()
 
 
-def test_missing_config_file_is_reported_cleanly(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr("paxbot.cli.CONFIG_PATH", tmp_path / "does-not-exist.toml")
-    assert main(["sync"]) == 2
+def test_missing_config_file_is_reported_cleanly(tmp_path, capsys):
+    """--config wins over everything, including a valid shows.toml in cwd."""
+    missing = tmp_path / "does-not-exist.toml"
+    assert main(["sync", "--config", str(missing)]) == 2
     err = capsys.readouterr().err
     assert err.strip() != ""
     assert "Traceback" not in err
 
 
-def test_malformed_config_file_is_reported_cleanly(tmp_path, monkeypatch, capsys):
+def test_malformed_config_file_is_reported_cleanly(tmp_path, capsys):
     bad_config = tmp_path / "shows.toml"
     bad_config.write_text("this is [ not valid toml", encoding="utf-8")
-    monkeypatch.setattr("paxbot.cli.CONFIG_PATH", bad_config)
-    assert main(["sync"]) == 2
+    assert main(["sync", "--config", str(bad_config)]) == 2
     err = capsys.readouterr().err
     assert err.strip() != ""
     assert "Traceback" not in err
+
+
+def _write_config(path: Path, slug: str) -> None:
+    path.write_text(
+        f"""
+[defaults]
+drop_in_threshold_minutes = 240
+
+[shows.{slug}]
+name       = "Alt Show"
+base_url   = "https://example.invalid"
+api_key    = "test-key"
+timezone   = "UTC"
+start_date = 2030-01-01
+end_date   = 2030-01-02
+""",
+        encoding="utf-8",
+    )
+
+
+def test_config_flag_is_honoured(db, tmp_path, capsys):
+    alt = tmp_path / "alt-shows.toml"
+    _write_config(alt, "altshow")
+    assert main(["sync", "--config", str(alt), "--show", "altshow", "--db", db]) == 0
+    assert "altshow: added" in capsys.readouterr().out
+
+
+def test_paxbot_config_env_var_is_honoured_when_the_flag_is_absent(
+    db, tmp_path, monkeypatch, capsys
+):
+    """A container sets PAXBOT_CONFIG once via compose instead of every command
+    repeating --config, mirroring how PAXBOT_DB already works."""
+    alt = tmp_path / "alt-shows.toml"
+    _write_config(alt, "altshow")
+    monkeypatch.setenv("PAXBOT_CONFIG", str(alt))
+    assert main(["sync", "--show", "altshow", "--db", db]) == 0
+    assert "altshow: added" in capsys.readouterr().out
+
+
+def test_config_flag_beats_the_env_var(db, tmp_path, monkeypatch, capsys):
+    env_cfg = tmp_path / "env-shows.toml"
+    flag_cfg = tmp_path / "flag-shows.toml"
+    _write_config(env_cfg, "envshow")
+    _write_config(flag_cfg, "flagshow")
+    monkeypatch.setenv("PAXBOT_CONFIG", str(env_cfg))
+    assert main(["sync", "--config", str(flag_cfg), "--show", "flagshow", "--db", db]) == 0
+    assert "flagshow: added" in capsys.readouterr().out
+
+
+def test_shows_toml_in_the_current_directory_beats_the_packaged_copy(
+    db, tmp_path, monkeypatch, capsys
+):
+    """A container's WORKDIR shadowing an installed copy is the whole point of
+    the cwd lookup; this is the same behaviour without a container."""
+    local_dir = tmp_path / "cwd"
+    local_dir.mkdir()
+    _write_config(local_dir / "shows.toml", "cwdshow")
+    monkeypatch.chdir(local_dir)
+    assert main(["sync", "--show", "cwdshow", "--db", db]) == 0
+    assert "cwdshow: added" in capsys.readouterr().out
+
+
+def test_packaged_config_is_the_last_resort_fallback(db, tmp_path, monkeypatch, capsys):
+    """No --config, no PAXBOT_CONFIG, and no ./shows.toml: falls back to the
+    copy shipped beside the package (the repo's own shows.toml in this dev
+    checkout)."""
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    monkeypatch.chdir(empty_dir)
+    assert main(["sync", "--db", db]) == 0
+    assert "west: added" in capsys.readouterr().out

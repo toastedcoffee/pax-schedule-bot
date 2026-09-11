@@ -30,6 +30,25 @@ def _resolve_db(flag: str | None) -> str:
     return flag or os.environ.get("PAXBOT_DB") or DEFAULT_DB
 
 
+def _resolve_config(flag: str | None) -> Path:
+    """--config wins, then PAXBOT_CONFIG, then ./shows.toml, then the copy
+    shipped beside the package.
+
+    The env var and the cwd lookup exist so a container can mount an updated
+    shows.toml without rebuilding the image - adding a PAX convention must
+    never require a rebuild.
+    """
+    if flag:
+        return Path(flag)
+    env = os.environ.get("PAXBOT_CONFIG")
+    if env:
+        return Path(env)
+    local = Path.cwd() / "shows.toml"
+    if local.is_file():
+        return local
+    return CONFIG_PATH
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="paxbot")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -37,12 +56,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sync = sub.add_parser("sync", help="fetch the schedule and update the store")
     sync.add_argument("--show", default="west")
     sync.add_argument("--db", default=None)
+    sync.add_argument("--config", default=None)
 
     listing = sub.add_parser("list", help="list events for a day")
     listing.add_argument("--day", required=True, help="YYYY-MM-DD")
     listing.add_argument("--category")
     listing.add_argument("--show", default="west")
     listing.add_argument("--db", default=None)
+    listing.add_argument("--config", default=None)
 
     return parser
 
@@ -51,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
     try:
-        config = load_config(CONFIG_PATH)
+        config = load_config(_resolve_config(args.config))
     except (FileNotFoundError, tomllib.TOMLDecodeError) as exc:
         print(f"failed to load config: {exc}", file=sys.stderr)
         return 2

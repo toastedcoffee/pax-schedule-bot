@@ -51,10 +51,12 @@ def run_sync(conn: sqlite3.Connection, show: Show, fetcher=fetch_schedules) -> S
     # NOTE: last_good is the current live count, so the threshold moves with it.
     # A series of individually-legitimate shrinkages can compound without any
     # single step tripping the guard. A persisted high-water mark was considered
-    # and rejected: it would block the annual show rollover, when shows.toml is
-    # repointed at next year's event and the freshly-published schedule is
-    # legitimately tiny. Drift is better surfaced as a warning over sync_runs
-    # history than as a gate that stops the bot updating at all.
+    # and rejected - not because it would handle rollover any worse (tested:
+    # the live-count guard rejects a rollover-sized drop identically, "got 1
+    # events, last good sync had 5"), but because it needs no extra persisted
+    # state to get the same result. Rollover itself is not this guard's job at
+    # all: each year gets its own show slug (see ADR 0005), so a new event
+    # count for `west-2027` never has to clear a threshold set by `west-2026`.
     last_good = event_count(conn, show.slug)
     try:
         check_guard_rail(len(parsed.events), last_good)

@@ -7,7 +7,7 @@ paxbot has four layers. Each knows as little as possible about the others.
 | Show adapters | `paxbot/sources/` | HTTP, JSON | `discord`, `sqlite3` |
 | Sync | `paxbot/sync/` | sources, store | `discord` |
 | Store | `paxbot/store/` | SQL | `httpx`, `discord` |
-| Bot | `paxbot/bot/` | Discord, store | `httpx` |
+| Bot (phase 2, not yet implemented) | `paxbot/bot/` | Discord, store | `httpx` |
 
 ## Why
 
