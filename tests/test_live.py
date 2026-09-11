@@ -14,6 +14,12 @@ from paxbot.sources.parse import API_TIME_FORMAT, parse_schedules
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "shows.toml"
 
+# Module-level guard: every test here is live, marker or not. Without this a
+# test added later without @pytest.mark.live would silently hit the real API on
+# every default `pytest` run - and the module-scoped payload fixture below
+# performs a real fetch.
+pytestmark = pytest.mark.live
+
 
 @pytest.fixture(scope="module")
 def show():
