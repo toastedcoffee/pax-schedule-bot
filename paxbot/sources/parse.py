@@ -105,6 +105,8 @@ def _parse_record(record: dict, gt_id: str, show: Show, tz: ZoneInfo) -> Event:
         if name
     )
     location = clean_text(record.get("location"))
+    description = clean_text(record.get("description"))
+    url = f"{show.base_url}/en-us/schedule/schedule-item.html?gtID={gt_id}"
     starts_utc = starts_local.astimezone(UTC)
     ends_utc = ends_local.astimezone(UTC)
 
@@ -113,18 +115,20 @@ def _parse_record(record: dict, gt_id: str, show: Show, tz: ZoneInfo) -> Event:
             show_slug=show.slug,
             gt_id=gt_id,
             title=title,
-            description=clean_text(record.get("description")),
+            description=description,
             starts_at=starts_utc,
             ends_at=ends_utc,
             day=starts_local.date(),
             location=location,
-            url=f"{show.base_url}/en-us/schedule/schedule-item.html?gtID={gt_id}",
+            url=url,
             categories=categories,
             row_hash=compute_row_hash(
                 title,
+                description,
                 starts_utc.isoformat(),
                 ends_utc.isoformat(),
                 location,
+                url,
                 categories,
             ),
         )

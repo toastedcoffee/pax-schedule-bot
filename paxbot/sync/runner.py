@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from paxbot.config import Show
 from paxbot.sources.leap import fetch_schedules
@@ -103,5 +103,5 @@ def _record_run(conn, show_slug: str, count: int, *, ok: bool, note: str) -> Non
     conn.execute(
         "INSERT INTO sync_runs (show_slug, ran_at, event_count, ok, note) "
         "VALUES (?, ?, ?, ?, ?)",
-        (show_slug, datetime.now().astimezone().isoformat(), count, int(ok), note),
+        (show_slug, datetime.now(UTC).isoformat(), count, int(ok), note),
     )

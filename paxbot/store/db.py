@@ -7,9 +7,15 @@ from pathlib import Path
 
 from paxbot.store.schema import SCHEMA
 
+SCHEMA_VERSION = 1
+
 
 class TransactionError(Exception):
     """The connection is not in a state where a transaction can be opened."""
+
+
+class SchemaVersionError(Exception):
+    """The database was written by a newer paxbot than this one."""
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -19,7 +25,26 @@ def connect(path: str | Path) -> sqlite3.Connection:
     if str(path) != ":memory:":
         conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring an existing database up to SCHEMA_VERSION.
+
+    Phase 1 is version 1 and has nothing to migrate; the hook exists so phase 2
+    can add columns safely instead of relying on CREATE TABLE IF NOT EXISTS,
+    which silently does nothing to a table that already exists.
+    """
+    current = conn.execute("PRAGMA user_version").fetchone()[0]
+    if current == SCHEMA_VERSION:
+        return
+    if current > SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f"database is at schema version {current}, this paxbot understands "
+            f"{SCHEMA_VERSION} - upgrade paxbot or use a different database"
+        )
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 @contextmanager

@@ -135,3 +135,35 @@ def test_skipped_records_are_reported_not_fatal(conn):
     report = run_sync(conn, WEST, fetcher=fetcher_for("edge_malformed.json"))
     assert report.added == 1
     assert report.skipped == 3
+
+
+def test_a_description_only_change_is_detected(conn):
+    import copy
+
+    payload = json.loads((FIXTURES / "schedules_sample.json").read_text(encoding="utf-8"))
+    run_sync(conn, WEST, fetcher=fetcher_returning(payload))
+    edited = copy.deepcopy(payload)
+    edited["schedules"][0]["description"] = "Rewritten upstream."
+    report = run_sync(conn, WEST, fetcher=fetcher_returning(edited))
+    assert report.changed == 1
+    assert get_event(conn, "west", "943694").description == "Rewritten upstream."
+
+
+def test_a_parsed_events_category_order_survives_the_round_trip(conn):
+    """SQLite's BINARY collation would otherwise sort TTRPGs before Tabletop.
+
+    Reproduced on the committed fixture: event 945852 parses as
+    ('Age 13+', 'Tabletop', 'TTRPGs') and previously read back as
+    ('Age 13+', 'TTRPGs', 'Tabletop').
+    """
+    run_sync(conn, WEST, fetcher=fetcher_for("schedules_sample.json"))
+    assert get_event(conn, "west", "945852").categories == (
+        "Age 13+", "Tabletop", "TTRPGs",
+    )
+
+
+def test_sync_runs_ran_at_is_utc(conn):
+    """The global constraint is UTC; a text ORDER BY ran_at must sort cleanly."""
+    run_sync(conn, WEST, fetcher=fetcher_for("schedules_sample.json"))
+    ran_at = conn.execute("SELECT ran_at FROM sync_runs").fetchone()["ran_at"]
+    assert ran_at.endswith("+00:00")

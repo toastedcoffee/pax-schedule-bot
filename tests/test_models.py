@@ -41,34 +41,47 @@ def test_drop_in_boundary_is_inclusive():
 
 
 def test_row_hash_is_stable_and_order_independent():
-    a = compute_row_hash("T", "2026-09-04T18:30:00+00:00", "2026-09-04T22:00:00+00:00",
-                         "Room", ("B", "A"))
-    b = compute_row_hash("T", "2026-09-04T18:30:00+00:00", "2026-09-04T22:00:00+00:00",
-                         "Room", ("A", "B"))
+    a = compute_row_hash("T", "d", "2026-09-04T18:30:00+00:00", "2026-09-04T22:00:00+00:00",
+                         "Room", "u", ("B", "A"))
+    b = compute_row_hash("T", "d", "2026-09-04T18:30:00+00:00", "2026-09-04T22:00:00+00:00",
+                         "Room", "u", ("A", "B"))
     assert a == b
 
 
 def test_row_hash_changes_when_location_changes():
-    a = compute_row_hash("T", "s", "e", "Room 1", ("A",))
-    b = compute_row_hash("T", "s", "e", "Room 2", ("A",))
+    a = compute_row_hash("T", "d", "s", "e", "Room 1", "u", ("A",))
+    b = compute_row_hash("T", "d", "s", "e", "Room 2", "u", ("A",))
+    assert a != b
+
+
+def test_row_hash_changes_when_only_the_description_changes():
+    """Omitting description meant an upstream edit could never reach the store."""
+    a = compute_row_hash("T", "old text", "s", "e", "Room", "u", ("A",))
+    b = compute_row_hash("T", "new text", "s", "e", "Room", "u", ("A",))
+    assert a != b
+
+
+def test_row_hash_changes_when_only_the_url_changes():
+    a = compute_row_hash("T", "d", "s", "e", "Room", "https://a/x", ("A",))
+    b = compute_row_hash("T", "d", "s", "e", "Room", "https://b/x", ("A",))
     assert a != b
 
 
 def test_row_hash_is_unambiguous_when_a_field_contains_a_pipe():
     """32 of 713 real PAX titles contain "|". These two collide under a
     "|"-joined payload: both flatten to
-    'Magic: The Gathering|The Hobbit|2026-09-04T18:30:00+00:00|e|Room|X'."""
+    'Magic: The Gathering|The Hobbit|d|2026-09-04T18:30:00+00:00|e|Room|u|X'."""
     a = compute_row_hash(
-        "Magic: The Gathering|The Hobbit", "2026-09-04T18:30:00+00:00", "e", "Room", ("X",)
+        "Magic: The Gathering|The Hobbit", "d", "2026-09-04T18:30:00+00:00", "e", "Room", "u", ("X",)
     )
     b = compute_row_hash(
-        "Magic: The Gathering", "The Hobbit|2026-09-04T18:30:00+00:00", "e", "Room", ("X",)
+        "Magic: The Gathering", "d", "The Hobbit|2026-09-04T18:30:00+00:00", "e", "Room", "u", ("X",)
     )
     assert a != b
 
 
 def test_row_hash_distinguishes_one_comma_category_from_two_categories():
     """A ","-joined category list cannot tell these apart."""
-    a = compute_row_hash("T", "s", "e", "Room", ("Tabletop,Tournaments",))
-    b = compute_row_hash("T", "s", "e", "Room", ("Tabletop", "Tournaments"))
+    a = compute_row_hash("T", "d", "s", "e", "Room", "u", ("Tabletop,Tournaments",))
+    b = compute_row_hash("T", "d", "s", "e", "Room", "u", ("Tabletop", "Tournaments"))
     assert a != b

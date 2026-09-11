@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from paxbot.models import Event
-from paxbot.store.db import TransactionError, connect, transaction
+from paxbot.store.db import SCHEMA_VERSION, SchemaVersionError, TransactionError, connect, transaction
 from paxbot.store.events import (
     event_count,
     events_for_day,
@@ -94,6 +94,25 @@ def test_events_for_day_filters_and_orders(conn):
     assert [e.gt_id for e in got] == ["2", "1"]
 
 
+def test_events_for_day_tiebreaks_on_gt_id_when_start_and_title_match(conn):
+    """ORDER BY starts_at, title alone leaves ties non-deterministic."""
+    with transaction(conn):
+        upsert_events(conn, [
+            make_event("9", title="Same", hour=18),
+            make_event("2", title="Same", hour=18),
+            make_event("5", title="Same", hour=18),
+        ])
+    got = events_for_day(conn, "west", date(2026, 9, 4))
+    assert [e.gt_id for e in got] == ["2", "5", "9"]
+
+
+def test_categories_round_trip_in_their_original_order(conn):
+    """SQLite's BINARY collation would otherwise put 'TTRPGs' before 'Tabletop'."""
+    with transaction(conn):
+        upsert_events(conn, [make_event(categories=("Age 13+", "Tabletop", "TTRPGs"))])
+    assert get_event(conn, "west", "1").categories == ("Age 13+", "Tabletop", "TTRPGs")
+
+
 def test_events_for_day_filters_by_category(conn):
     with transaction(conn):
         upsert_events(conn, [
@@ -120,3 +139,24 @@ def test_transaction_rolls_back_on_error(conn):
             upsert_events(conn, [make_event("2")])
             raise RuntimeError("boom")
     assert event_count(conn, "west") == 1
+
+
+def test_fresh_database_is_stamped_with_the_current_schema_version(tmp_path):
+    conn = connect(tmp_path / "fresh.db")
+    try:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version == SCHEMA_VERSION
+    finally:
+        conn.close()
+
+
+def test_a_database_from_a_newer_paxbot_is_refused(tmp_path):
+    """An existing DB at a schema version this code doesn't understand must
+    fail loudly rather than silently operate on a shape it doesn't know."""
+    path = tmp_path / "future.db"
+    conn = connect(path)
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    conn.close()
+
+    with pytest.raises(SchemaVersionError):
+        connect(path)

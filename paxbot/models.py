@@ -9,21 +9,26 @@ from datetime import date, datetime
 
 def compute_row_hash(
     title: str,
+    description: str,
     starts_at_iso: str,
     ends_at_iso: str,
     location: str,
+    url: str,
     categories: tuple[str, ...],
 ) -> str:
-    """Hash the user-visible fields, so sync can name what actually changed.
+    """Hash every user-visible field, so sync can name what actually changed.
 
-    Encoded as JSON rather than delimiter-joined: real PAX titles contain
-    "|" (every Magic: The Gathering event) and at least one real category
-    contains "," ("Video Gaming (PC, HH, Console)"). A delimiter that can
-    appear inside the data lets field boundaries shift, so two different
-    events can flatten to the same payload and hash identically.
+    JSON-encoded rather than delimiter-joined: 32 of 713 real PAX West titles
+    contain "|" and the category "Video Gaming (PC, HH, Console)" contains ",".
+    A delimiter that occurs in the data lets field boundaries shift, so two
+    different events could hash alike and a real change would read as unchanged.
+
+    description and url are included deliberately: omitting them meant a
+    description edited upstream could never reach the store.
     """
     payload = json.dumps(
-        [title, starts_at_iso, ends_at_iso, location, sorted(categories)],
+        [title, description, starts_at_iso, ends_at_iso, location, url,
+         sorted(categories)],
         ensure_ascii=False,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

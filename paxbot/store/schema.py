@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS event_categories (
     show_slug TEXT NOT NULL,
     gt_id     TEXT NOT NULL,
     category  TEXT NOT NULL,
+    ordinal   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (show_slug, gt_id, category)
 );
 

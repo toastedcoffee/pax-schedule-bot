@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import tomllib
 import unicodedata
 from datetime import date
 from pathlib import Path
@@ -48,7 +49,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    config = load_config(CONFIG_PATH)
+
+    try:
+        config = load_config(CONFIG_PATH)
+    except (FileNotFoundError, tomllib.TOMLDecodeError) as exc:
+        print(f"failed to load config: {exc}", file=sys.stderr)
+        return 2
 
     try:
         show = config.show(args.show)
@@ -56,11 +62,21 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc).strip("\"'"), file=sys.stderr)
         return 2
 
+    # Validate all arguments before connect() - connect() creates the db file
+    # as a side effect, and a usage error must not leave one behind.
+    day = None
+    if args.command == "list":
+        try:
+            day = date.fromisoformat(args.day)
+        except ValueError:
+            print(f"invalid --day {args.day!r}, expected YYYY-MM-DD", file=sys.stderr)
+            return 2
+
     conn = connect(_resolve_db(args.db))
     try:
         if args.command == "sync":
             return _cmd_sync(conn, show)
-        return _cmd_list(conn, show, args, config.drop_in_threshold_minutes)
+        return _cmd_list(conn, show, day, args.category, config.drop_in_threshold_minutes)
     finally:
         conn.close()
 
@@ -81,15 +97,9 @@ def _cmd_sync(conn, show) -> int:
     return 0
 
 
-def _cmd_list(conn, show, args, threshold: int) -> int:
-    try:
-        day = date.fromisoformat(args.day)
-    except ValueError:
-        print(f"invalid --day {args.day!r}, expected YYYY-MM-DD", file=sys.stderr)
-        return 2
-
+def _cmd_list(conn, show, day: date, category: str | None, threshold: int) -> int:
     tz = ZoneInfo(show.timezone)
-    events = events_for_day(conn, show.slug, day, category=args.category)
+    events = events_for_day(conn, show.slug, day, category=category)
     if not events:
         print(f"no events for {day} (have you run `paxbot sync`?)")
         return 0

@@ -27,7 +27,7 @@ def _to_event(row: sqlite3.Row, categories: tuple[str, ...]) -> Event:
 def _categories(conn, show_slug: str, gt_id: str) -> tuple[str, ...]:
     rows = conn.execute(
         "SELECT category FROM event_categories "
-        "WHERE show_slug = ? AND gt_id = ? ORDER BY category",
+        "WHERE show_slug = ? AND gt_id = ? ORDER BY ordinal",
         (show_slug, gt_id),
     ).fetchall()
     return tuple(r["category"] for r in rows)
@@ -67,8 +67,12 @@ def upsert_events(conn: sqlite3.Connection, events: Iterable[Event]) -> None:
             (event.show_slug, event.gt_id),
         )
         conn.executemany(
-            "INSERT INTO event_categories (show_slug, gt_id, category) VALUES (?, ?, ?)",
-            [(event.show_slug, event.gt_id, c) for c in event.categories],
+            "INSERT INTO event_categories (show_slug, gt_id, category, ordinal) "
+            "VALUES (?, ?, ?, ?)",
+            [
+                (event.show_slug, event.gt_id, c, i)
+                for i, c in enumerate(event.categories)
+            ],
         )
 
 
@@ -118,6 +122,6 @@ def events_for_day(
             "WHERE c.show_slug = e.show_slug AND c.gt_id = e.gt_id AND c.category = ?)"
         )
         params.append(category)
-    sql += " ORDER BY e.starts_at, e.title"
+    sql += " ORDER BY e.starts_at, e.title, e.gt_id"
     rows = conn.execute(sql, params).fetchall()
     return [_to_event(r, _categories(conn, show_slug, r["gt_id"])) for r in rows]

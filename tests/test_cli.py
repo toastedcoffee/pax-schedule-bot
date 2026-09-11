@@ -97,3 +97,28 @@ def test_an_explicit_db_flag_beats_the_env_var(tmp_path, monkeypatch):
     assert main(["sync", "--db", str(flagdb)]) == 0
     assert flagdb.exists()
     assert not envdb.exists()
+
+
+def test_no_db_file_is_created_when_day_is_invalid(tmp_path):
+    """connect() must run after argument validation, not before."""
+    db_path = tmp_path / "should-not-exist.db"
+    assert main(["list", "--day", "nope", "--db", str(db_path)]) == 2
+    assert not db_path.exists()
+
+
+def test_missing_config_file_is_reported_cleanly(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("paxbot.cli.CONFIG_PATH", tmp_path / "does-not-exist.toml")
+    assert main(["sync"]) == 2
+    err = capsys.readouterr().err
+    assert err.strip() != ""
+    assert "Traceback" not in err
+
+
+def test_malformed_config_file_is_reported_cleanly(tmp_path, monkeypatch, capsys):
+    bad_config = tmp_path / "shows.toml"
+    bad_config.write_text("this is [ not valid toml", encoding="utf-8")
+    monkeypatch.setattr("paxbot.cli.CONFIG_PATH", bad_config)
+    assert main(["sync"]) == 2
+    err = capsys.readouterr().err
+    assert err.strip() != ""
+    assert "Traceback" not in err
