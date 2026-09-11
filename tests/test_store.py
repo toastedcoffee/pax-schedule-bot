@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import UTC, date, datetime
 
 import pytest
@@ -160,3 +161,48 @@ def test_a_database_from_a_newer_paxbot_is_refused(tmp_path):
 
     with pytest.raises(SchemaVersionError):
         connect(path)
+
+
+PRE_ORDINAL_SCHEMA = """
+CREATE TABLE events (show_slug TEXT, gt_id TEXT, title TEXT, description TEXT,
+  day TEXT, starts_at TEXT, ends_at TEXT, location TEXT, url TEXT,
+  cancelled INTEGER DEFAULT 0, row_hash TEXT, updated_at TEXT,
+  PRIMARY KEY (show_slug, gt_id));
+CREATE TABLE event_categories (show_slug TEXT, gt_id TEXT, category TEXT,
+  PRIMARY KEY (show_slug, gt_id, category));
+CREATE TABLE sync_runs (show_slug TEXT, ran_at TEXT, event_count INTEGER,
+  ok INTEGER, note TEXT DEFAULT '');
+INSERT INTO events VALUES ('west','1','Old Event','d','2026-09-04',
+  '2026-09-04T18:00:00+00:00','2026-09-04T19:00:00+00:00','R','u',0,'h','t');
+INSERT INTO event_categories VALUES ('west','1','Panels');
+"""
+
+
+def test_a_pre_ordinal_database_is_migrated_not_just_stamped(tmp_path):
+    """The hook must ALTER before it stamps, or the database is permanently
+    broken with no path to recovery."""
+    path = tmp_path / "old.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(PRE_ORDINAL_SCHEMA)
+    legacy.commit()
+    legacy.close()
+
+    conn = connect(path)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(event_categories)")}
+    assert "ordinal" in columns
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    # and the pre-existing data is still queryable
+    assert [e.gt_id for e in events_for_day(conn, "west", date(2026, 9, 4))] == ["1"]
+    conn.close()
+
+
+def test_migrating_preserves_existing_rows(tmp_path):
+    path = tmp_path / "old.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(PRE_ORDINAL_SCHEMA)
+    legacy.commit()
+    legacy.close()
+
+    conn = connect(path)
+    assert get_event(conn, "west", "1").categories == ("Panels",)
+    conn.close()

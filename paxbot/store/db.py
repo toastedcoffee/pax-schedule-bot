@@ -29,12 +29,17 @@ def connect(path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     """Bring an existing database up to SCHEMA_VERSION.
 
-    Phase 1 is version 1 and has nothing to migrate; the hook exists so phase 2
-    can add columns safely instead of relying on CREATE TABLE IF NOT EXISTS,
-    which silently does nothing to a table that already exists.
+    connect() runs CREATE TABLE IF NOT EXISTS before this, which does nothing
+    to a table that already exists. Column additions therefore have to happen
+    here, explicitly, before the version is stamped - stamping first would mark
+    an unmigrated database as current and leave it permanently broken.
     """
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     if current == SCHEMA_VERSION:
@@ -44,6 +49,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
             f"database is at schema version {current}, this paxbot understands "
             f"{SCHEMA_VERSION} - upgrade paxbot or use a different database"
         )
+
+    if current < 1 and "ordinal" not in _column_names(conn, "event_categories"):
+        # Databases written before category ordering was preserved.
+        conn.execute(
+            "ALTER TABLE event_categories "
+            "ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0"
+        )
+
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 

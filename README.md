@@ -31,9 +31,18 @@ Invoke the CLI as a module (this also works without installing the package):
 
 `--category` must match the upstream category string exactly, including case
 ("Panels" will not match "panels"). To see the real category names for a
-show, query the database directly after a sync:
+show, query the database directly after a sync. `python:3.13-slim` (the
+deployment container's base image) has no `sqlite3` CLI, and a TrueNAS
+operator may have no host Python either, so run the query through Python
+inside the container instead:
 
-    sqlite3 paxbot.db "SELECT DISTINCT category FROM event_categories ORDER BY category;"
+    docker compose run --rm --entrypoint python paxbot -c \
+      "import sqlite3;print(*sorted({r[0] for r in sqlite3.connect('/data/paxbot.db').execute('SELECT DISTINCT category FROM event_categories')}),sep='\n')"
+
+Outside the container, with a local Python and the database at `paxbot.db`,
+the equivalent is:
+
+    python -c "import sqlite3;print(*sorted({r[0] for r in sqlite3.connect('paxbot.db').execute('SELECT DISTINCT category FROM event_categories')}),sep='\n')"
 
 Config resolution follows the same override order as the database path:
 `--config` wins, then the `PAXBOT_CONFIG` environment variable, then

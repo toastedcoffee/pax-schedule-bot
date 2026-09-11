@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from paxbot.cli import _ascii, main
+from paxbot.store.db import SCHEMA_VERSION, connect
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -106,6 +107,19 @@ def test_no_db_file_is_created_when_day_is_invalid(tmp_path):
     assert not db_path.exists()
 
 
+def test_a_database_from_a_newer_schema_version_exits_cleanly(tmp_path, capsys):
+    """SchemaVersionError must reach the user as a message, not a traceback."""
+    db_path = tmp_path / "future.db"
+    conn = connect(db_path)
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    conn.close()
+
+    assert main(["sync", "--db", str(db_path)]) == 1
+    err = capsys.readouterr().err
+    assert err.strip() != ""
+    assert "Traceback" not in err
+
+
 def test_missing_config_file_is_reported_cleanly(tmp_path, capsys):
     """--config wins over everything, including a valid shows.toml in cwd."""
     missing = tmp_path / "does-not-exist.toml"
@@ -122,6 +136,17 @@ def test_malformed_config_file_is_reported_cleanly(tmp_path, capsys):
     err = capsys.readouterr().err
     assert err.strip() != ""
     assert "Traceback" not in err
+
+
+def test_malformed_config_error_names_the_resolved_path(tmp_path, capsys):
+    """TOMLDecodeError carries a line/column, not a filename - without the
+    resolved path in the message, a stray shows.toml that silently won the
+    fallback lookup gives no clue which file was actually read."""
+    bad_config = tmp_path / "shows.toml"
+    bad_config.write_text("this is [ not valid toml", encoding="utf-8")
+    assert main(["sync", "--config", str(bad_config)]) == 2
+    err = capsys.readouterr().err
+    assert str(bad_config) in err
 
 
 def _write_config(path: Path, slug: str) -> None:

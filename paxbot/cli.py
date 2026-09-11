@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sqlite3
 import sys
 import tomllib
 import unicodedata
@@ -12,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from paxbot.config import load_config
 from paxbot.sources.leap import LeapError, fetch_schedules
-from paxbot.store.db import connect
+from paxbot.store.db import SchemaVersionError, connect
 from paxbot.store.events import events_for_day
 from paxbot.sync.diff import GuardRailError
 from paxbot.sync.runner import run_sync
@@ -71,10 +72,11 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
+    config_path = _resolve_config(args.config)
     try:
-        config = load_config(_resolve_config(args.config))
+        config = load_config(config_path)
     except (FileNotFoundError, tomllib.TOMLDecodeError) as exc:
-        print(f"failed to load config: {exc}", file=sys.stderr)
+        print(f"failed to load config {config_path}: {exc}", file=sys.stderr)
         return 2
 
     try:
@@ -93,7 +95,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"invalid --day {args.day!r}, expected YYYY-MM-DD", file=sys.stderr)
             return 2
 
-    conn = connect(_resolve_db(args.db))
+    try:
+        conn = connect(_resolve_db(args.db))
+    except (SchemaVersionError, sqlite3.Error) as exc:
+        print(f"cannot open database: {exc}", file=sys.stderr)
+        return 1
     try:
         if args.command == "sync":
             return _cmd_sync(conn, show)
@@ -107,7 +113,7 @@ def _cmd_sync(conn, show) -> int:
     # so tests that patch paxbot.cli.fetch_schedules would otherwise hit the network.
     try:
         report = run_sync(conn, show, fetcher=fetch_schedules)
-    except (LeapError, GuardRailError) as exc:
+    except (LeapError, GuardRailError, sqlite3.Error) as exc:
         print(f"sync failed: {exc}", file=sys.stderr)
         return 1
     print(
