@@ -103,6 +103,23 @@ def test_a_write_failure_rolls_back_and_is_recorded(conn, monkeypatch):
     assert "write failed" in rows[0]["note"]
 
 
+def test_a_broken_audit_write_does_not_mask_the_real_error(conn, monkeypatch):
+    """A dead disk breaks the write AND the audit row. The caller needs the
+    root cause, not a secondary error from the bookkeeping."""
+    import paxbot.sync.runner as runner_module
+
+    def boom_write(_conn, _events):
+        raise RuntimeError("disk died mid-write")
+
+    def boom_audit(*_args, **_kwargs):
+        raise OSError("disk full writing audit row")
+
+    monkeypatch.setattr(runner_module, "upsert_events", boom_write)
+    monkeypatch.setattr(runner_module, "_record_run", boom_audit)
+    with pytest.raises(RuntimeError, match="disk died mid-write"):
+        run_sync(conn, WEST, fetcher=fetcher_for("schedules_sample.json"))
+
+
 def test_a_fetch_failure_is_recorded(conn):
     def boom(_show):
         raise LeapError("api down")

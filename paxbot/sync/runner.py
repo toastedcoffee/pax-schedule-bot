@@ -32,15 +32,20 @@ def run_sync(conn: sqlite3.Connection, show: Show, fetcher=fetch_schedules) -> S
     """Fetch, parse, guard, and write one sync atomically.
 
     Failures RAISE - they are never signalled by a returned SyncReport. A
-    returned report therefore always describes a successful sync. Every
-    failure path writes an ok=0 row to sync_runs before re-raising, so the
-    audit table records attempts, not just successes.
+    returned report therefore always describes a successful sync.
+
+    Fetch/parse failures, guard-rail rejections and write failures each write
+    an ok=0 row to sync_runs before re-raising, so the audit table records
+    attempts rather than only successes. Failures in the bookkeeping itself
+    (event_count, stored_hashes/diff, or the audit insert) are NOT recorded -
+    if the database is the thing that is broken, there is nowhere reliable to
+    record that it is broken.
     """
     try:
         payload = fetcher(show)
         parsed = parse_schedules(payload, show)
     except Exception as exc:
-        _record_run(conn, show.slug, 0, ok=False, note=f"fetch/parse failed: {exc}")
+        _try_record_failure(conn, show.slug, 0, f"fetch/parse failed: {exc}")
         raise
 
     # NOTE: last_good is the current live count, so the threshold moves with it.
@@ -54,7 +59,7 @@ def run_sync(conn: sqlite3.Connection, show: Show, fetcher=fetch_schedules) -> S
     try:
         check_guard_rail(len(parsed.events), last_good)
     except GuardRailError as exc:
-        _record_run(conn, show.slug, len(parsed.events), ok=False, note=str(exc))
+        _try_record_failure(conn, show.slug, len(parsed.events), str(exc))
         raise
 
     diff = diff_events(stored_hashes(conn, show.slug), parsed.events)
@@ -65,7 +70,7 @@ def run_sync(conn: sqlite3.Connection, show: Show, fetcher=fetch_schedules) -> S
             if diff.removed:
                 mark_cancelled(conn, show.slug, diff.removed)
     except Exception as exc:
-        _record_run(conn, show.slug, len(parsed.events), ok=False, note=f"write failed: {exc}")
+        _try_record_failure(conn, show.slug, len(parsed.events), f"write failed: {exc}")
         raise
 
     report = SyncReport(
@@ -78,6 +83,20 @@ def run_sync(conn: sqlite3.Connection, show: Show, fetcher=fetch_schedules) -> S
     )
     _record_run(conn, show.slug, len(parsed.events), ok=True, note="")
     return report
+
+
+def _try_record_failure(conn, show_slug: str, count: int, note: str) -> None:
+    """Record a failed attempt, but never let that mask the real error.
+
+    The failure most worth auditing - the database or disk being broken - is
+    exactly the one most likely to break the audit INSERT too. If that happens,
+    the caller must still see the original exception, not a confusing secondary
+    one from the bookkeeping.
+    """
+    try:
+        _record_run(conn, show_slug, count, ok=False, note=note)
+    except Exception:
+        pass
 
 
 def _record_run(conn, show_slug: str, count: int, *, ok: bool, note: str) -> None:
