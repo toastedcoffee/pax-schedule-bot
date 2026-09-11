@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import unicodedata
 from datetime import date
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -92,9 +93,31 @@ def _cmd_list(conn, show, args, threshold: int) -> int:
         end = event.ends_at.astimezone(tz)
         when = f"{_clock(start)}-{_clock(end)}"
         marker = "  [drop-in]" if event.is_drop_in(threshold) else ""
-        print(f"  {when:<18} {event.title}")
-        print(f"  {'':<18} {event.location}{marker}")
+        print(f"  {when:<18} {_ascii(event.title)}")
+        print(f"  {'':<18} {_ascii(event.location)}{marker}")
     return 0
+
+
+_ASCII_PUNCT = str.maketrans({
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "“": '"', "”": '"', "„": '"',
+    "–": "-", "—": "-", "―": "-", "−": "-",
+    "…": "...", " ": " ", "•": "*", "·": "-",
+    "™": "(TM)", "®": "(R)", "©": "(C)",
+})
+
+
+def _ascii(text: str) -> str:
+    """Fold upstream text to ASCII for terminal output.
+
+    Real PAX titles carry curly apostrophes, em dashes and accented names -
+    "Samantha Beart", "Village in the Shade's", "... - The Next Chapter".
+    Windows stdout is cp1252, so printing those raw yields replacement
+    characters. Folding keeps them readable instead.
+    """
+    folded = unicodedata.normalize("NFKD", text.translate(_ASCII_PUNCT))
+    stripped = "".join(c for c in folded if not unicodedata.combining(c))
+    return stripped.encode("ascii", "replace").decode("ascii")
 
 
 def _clock(moment) -> str:

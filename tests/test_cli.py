@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from paxbot.cli import main
+from paxbot.cli import _ascii, main
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -49,6 +49,23 @@ def test_list_filters_by_category(db, capsys):
     out = capsys.readouterr().out
     assert "Can't Stop" in out
     assert "Crokinole" not in out
+
+
+def test_times_render_in_the_shows_timezone_not_utc(db, capsys):
+    """11:30 PDT is 18:30 UTC. Printing the raw instant would say 6:30pm."""
+    main(["sync", "--db", db])
+    capsys.readouterr()
+    main(["list", "--day", "2026-09-04", "--db", db])
+    out = capsys.readouterr().out
+    assert "11:30am" in out
+    assert "6:30pm" not in out
+
+
+def test_upstream_text_is_folded_to_ascii():
+    """The fixture is clean ASCII; real PAX data is not."""
+    assert _ascii("Samantha Béart") == "Samantha Beart"
+    assert _ascii("Game — The Next Chapter") == "Game - The Next Chapter"
+    assert _ascii("Village in the Shade’s") == "Village in the Shade's"
 
 
 def test_output_is_ascii_only(db, capsys):
