@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import unicodedata
 from datetime import date
@@ -19,19 +20,28 @@ DEFAULT_DB = "paxbot.db"
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "shows.toml"
 
 
+def _resolve_db(flag: str | None) -> str:
+    """--db wins, then PAXBOT_DB, then a file beside the working directory.
+
+    The env var exists so a container sets the path once in compose instead of
+    every command repeating --db.
+    """
+    return flag or os.environ.get("PAXBOT_DB") or DEFAULT_DB
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="paxbot")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sync = sub.add_parser("sync", help="fetch the schedule and update the store")
     sync.add_argument("--show", default="west")
-    sync.add_argument("--db", default=DEFAULT_DB)
+    sync.add_argument("--db", default=None)
 
     listing = sub.add_parser("list", help="list events for a day")
     listing.add_argument("--day", required=True, help="YYYY-MM-DD")
     listing.add_argument("--category")
     listing.add_argument("--show", default="west")
-    listing.add_argument("--db", default=DEFAULT_DB)
+    listing.add_argument("--db", default=None)
 
     return parser
 
@@ -46,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc).strip("\"'"), file=sys.stderr)
         return 2
 
-    conn = connect(args.db)
+    conn = connect(_resolve_db(args.db))
     try:
         if args.command == "sync":
             return _cmd_sync(conn, show)

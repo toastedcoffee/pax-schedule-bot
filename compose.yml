@@ -1,0 +1,10 @@
+services:
+  paxbot:
+    build: .
+    image: paxbot:latest
+    environment:
+      PAXBOT_DB: /data/paxbot.db
+    volumes:
+      # On TrueNAS, point the left-hand side at a dataset,
+      # e.g. /mnt/tank/apps/paxbot/data:/data
+      - ./data:/data

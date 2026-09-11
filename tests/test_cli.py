@@ -80,3 +80,20 @@ def test_output_is_ascii_only(db, capsys):
 def test_unknown_show_exits_nonzero(db, capsys):
     assert main(["sync", "--show", "nope", "--db", db]) == 2
     assert "unknown show" in capsys.readouterr().err
+
+
+def test_db_path_comes_from_the_env_var_when_the_flag_is_absent(tmp_path, monkeypatch):
+    """Compose sets the path once; commands should not repeat --db."""
+    envdb = tmp_path / "from-env.db"
+    monkeypatch.setenv("PAXBOT_DB", str(envdb))
+    assert main(["sync"]) == 0
+    assert envdb.exists()
+
+
+def test_an_explicit_db_flag_beats_the_env_var(tmp_path, monkeypatch):
+    envdb = tmp_path / "from-env.db"
+    flagdb = tmp_path / "from-flag.db"
+    monkeypatch.setenv("PAXBOT_DB", str(envdb))
+    assert main(["sync", "--db", str(flagdb)]) == 0
+    assert flagdb.exists()
+    assert not envdb.exists()
