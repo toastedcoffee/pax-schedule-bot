@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from paxbot.config import Show
+from paxbot.sources.leap import LeapError
 from paxbot.store.db import connect
 from paxbot.store.events import event_count, get_event
 from paxbot.sync.diff import GuardRailError
@@ -37,7 +38,6 @@ def conn():
 
 def test_first_sync_inserts_everything(conn):
     report = run_sync(conn, WEST, fetcher=fetcher_for("schedules_sample.json"))
-    assert report.ok is True
     assert report.added == 5
     assert event_count(conn, "west") == 5
 
@@ -77,8 +77,44 @@ def test_guard_rail_rejects_and_preserves_previous_data(conn):
     assert event_count(conn, "west") == 5
 
 
+def test_guard_rail_rejection_is_recorded(conn):
+    """The audit table must record attempts, not just successes."""
+    run_sync(conn, WEST, fetcher=fetcher_for("schedules_sample.json"))
+    with pytest.raises(GuardRailError):
+        run_sync(conn, WEST, fetcher=fetcher_returning({"schedules": []}))
+    rows = conn.execute("SELECT ok, note FROM sync_runs ORDER BY rowid").fetchall()
+    assert [r["ok"] for r in rows] == [1, 0]
+    assert "zero events" in rows[-1]["note"]
+
+
+def test_a_write_failure_rolls_back_and_is_recorded(conn, monkeypatch):
+    import paxbot.sync.runner as runner_module
+
+    def boom(_conn, _events):
+        raise RuntimeError("disk died mid-write")
+
+    monkeypatch.setattr(runner_module, "upsert_events", boom)
+    with pytest.raises(RuntimeError):
+        run_sync(conn, WEST, fetcher=fetcher_for("schedules_sample.json"))
+
+    assert event_count(conn, "west") == 0  # rolled back
+    rows = conn.execute("SELECT ok, note FROM sync_runs").fetchall()
+    assert [r["ok"] for r in rows] == [0]
+    assert "write failed" in rows[0]["note"]
+
+
+def test_a_fetch_failure_is_recorded(conn):
+    def boom(_show):
+        raise LeapError("api down")
+
+    with pytest.raises(LeapError):
+        run_sync(conn, WEST, fetcher=boom)
+    rows = conn.execute("SELECT ok, note FROM sync_runs").fetchall()
+    assert [r["ok"] for r in rows] == [0]
+    assert "api down" in rows[0]["note"]
+
+
 def test_skipped_records_are_reported_not_fatal(conn):
     report = run_sync(conn, WEST, fetcher=fetcher_for("edge_malformed.json"))
-    assert report.ok is True
     assert report.added == 1
     assert report.skipped == 3

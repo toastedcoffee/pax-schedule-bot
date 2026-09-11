@@ -26,14 +26,30 @@ class SyncReport:
     removed: int = 0
     unchanged: int = 0
     skipped: int = 0
-    ok: bool = False
-    note: str = ""
 
 
 def run_sync(conn: sqlite3.Connection, show: Show, fetcher=fetch_schedules) -> SyncReport:
-    payload = fetcher(show)
-    parsed = parse_schedules(payload, show)
+    """Fetch, parse, guard, and write one sync atomically.
 
+    Failures RAISE - they are never signalled by a returned SyncReport. A
+    returned report therefore always describes a successful sync. Every
+    failure path writes an ok=0 row to sync_runs before re-raising, so the
+    audit table records attempts, not just successes.
+    """
+    try:
+        payload = fetcher(show)
+        parsed = parse_schedules(payload, show)
+    except Exception as exc:
+        _record_run(conn, show.slug, 0, ok=False, note=f"fetch/parse failed: {exc}")
+        raise
+
+    # NOTE: last_good is the current live count, so the threshold moves with it.
+    # A series of individually-legitimate shrinkages can compound without any
+    # single step tripping the guard. A persisted high-water mark was considered
+    # and rejected: it would block the annual show rollover, when shows.toml is
+    # repointed at next year's event and the freshly-published schedule is
+    # legitimately tiny. Drift is better surfaced as a warning over sync_runs
+    # history than as a gate that stops the bot updating at all.
     last_good = event_count(conn, show.slug)
     try:
         check_guard_rail(len(parsed.events), last_good)
@@ -43,10 +59,14 @@ def run_sync(conn: sqlite3.Connection, show: Show, fetcher=fetch_schedules) -> S
 
     diff = diff_events(stored_hashes(conn, show.slug), parsed.events)
 
-    with transaction(conn):
-        upsert_events(conn, diff.added + diff.changed)
-        if diff.removed:
-            mark_cancelled(conn, show.slug, diff.removed)
+    try:
+        with transaction(conn):
+            upsert_events(conn, diff.added + diff.changed)
+            if diff.removed:
+                mark_cancelled(conn, show.slug, diff.removed)
+    except Exception as exc:
+        _record_run(conn, show.slug, len(parsed.events), ok=False, note=f"write failed: {exc}")
+        raise
 
     report = SyncReport(
         show_slug=show.slug,
@@ -55,7 +75,6 @@ def run_sync(conn: sqlite3.Connection, show: Show, fetcher=fetch_schedules) -> S
         removed=len(diff.removed),
         unchanged=diff.unchanged,
         skipped=len(parsed.skipped),
-        ok=True,
     )
     _record_run(conn, show.slug, len(parsed.events), ok=True, note="")
     return report
