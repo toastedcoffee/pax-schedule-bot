@@ -83,12 +83,15 @@ def _cmd_list(conn, show, args, threshold: int) -> int:
         print(f"no events for {day} (have you run `paxbot sync`?)")
         return 0
 
-    print(f"{show.name} — {day:%A, %B %d}")
+    # ASCII only: Windows consoles default to cp1252, where an em dash renders
+    # as a replacement character. This CLI is a diagnostic tool; typography is
+    # not worth a portability bug on the platform it is self-hosted from.
+    print(f"{show.name} - {day:%A, %B %d}")
     for event in events:
         start = event.starts_at.astimezone(tz)
         end = event.ends_at.astimezone(tz)
-        when = f"{_clock(start)}–{_clock(end)}"
-        marker = " · drop-in" if event.is_drop_in(threshold) else ""
+        when = f"{_clock(start)}-{_clock(end)}"
+        marker = "  [drop-in]" if event.is_drop_in(threshold) else ""
         print(f"  {when:<18} {event.title}")
         print(f"  {'':<18} {event.location}{marker}")
     return 0

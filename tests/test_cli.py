@@ -39,7 +39,7 @@ def test_list_marks_drop_ins(db, capsys):
     capsys.readouterr()
     main(["list", "--day", "2026-09-04", "--db", db])
     out = capsys.readouterr().out
-    assert "drop-in" in out
+    assert "[drop-in]" in out
 
 
 def test_list_filters_by_category(db, capsys):
@@ -49,6 +49,15 @@ def test_list_filters_by_category(db, capsys):
     out = capsys.readouterr().out
     assert "Can't Stop" in out
     assert "Crokinole" not in out
+
+
+def test_output_is_ascii_only(db, capsys):
+    """Windows consoles default to cp1252; non-ASCII renders as garbage."""
+    main(["sync", "--db", db])
+    capsys.readouterr()
+    main(["list", "--day", "2026-09-04", "--db", db])
+    out = capsys.readouterr().out
+    assert out.isascii(), [c for c in set(out) if not c.isascii()]
 
 
 def test_unknown_show_exits_nonzero(db, capsys):
