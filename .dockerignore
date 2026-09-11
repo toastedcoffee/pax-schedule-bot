@@ -17,3 +17,23 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# Build/packaging metadata - never COPY'd, but keep the context clean.
+paxbot.egg-info/
+*.egg-info/
+build/
+dist/
+.tox/
+htmlcov/
+.coverage
+.coverage.*
+
+# Mirror .gitignore's working-document rules. None of these exist today; they
+# are here so that creating one later cannot quietly enter a build context.
+plans/
+specs/
+reports/
+notes/
+scratch/
+*.local.md
+*.draft.md
