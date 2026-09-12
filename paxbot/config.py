@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 DEFAULT_DROP_IN_THRESHOLD_MINUTES = 240
 
@@ -18,6 +19,21 @@ class Show:
     timezone: str
     start_date: date
     end_date: date
+
+    def is_running(self, now: datetime) -> bool:
+        """True when `now` falls on a show day, in the show's own timezone.
+
+        The conversion matters: 2026-09-04 06:00 UTC is still 2026-09-03 in
+        Seattle, and reporting the show as running a day early would make
+        /schedule default to a day that has not started.
+
+        Naive datetimes are rejected rather than assumed to be UTC or local -
+        either assumption is wrong half the time and fails silently.
+        """
+        if now.tzinfo is None:
+            raise ValueError("is_running() needs a timezone-aware datetime")
+        local = now.astimezone(ZoneInfo(self.timezone)).date()
+        return self.start_date <= local <= self.end_date
 
 
 @dataclass(frozen=True)
