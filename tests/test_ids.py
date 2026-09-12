@@ -45,3 +45,24 @@ def test_rejects_a_foreign_custom_id():
 
 def test_kinds_are_unique():
     assert len(set(ids.ALL_KINDS)) == len(ids.ALL_KINDS)
+
+
+def test_accepts_an_id_of_exactly_the_limit():
+    """100 characters is legal, 101 is not.
+
+    Pinning the exact boundary catches two mutations that every other test in
+    this file misses: an off-by-one in the check (`>` becoming `>=`), and a
+    well-meaning raise of CUSTOM_ID_MAX itself. Discord reports neither - it
+    just silently ignores the component.
+    """
+    longest = max(ids.ALL_KINDS, key=len)
+    overhead = len(f"{ids.PREFIX}{ids.SEP}{longest}{ids.SEP}")
+    built = ids.encode(longest, "9" * (ids.CUSTOM_ID_MAX - overhead))
+    assert len(built) == ids.CUSTOM_ID_MAX == 100
+
+
+def test_rejects_an_id_one_character_over_the_limit():
+    longest = max(ids.ALL_KINDS, key=len)
+    overhead = len(f"{ids.PREFIX}{ids.SEP}{longest}{ids.SEP}")
+    with pytest.raises(ids.IdError, match="too long"):
+        ids.encode(longest, "9" * (ids.CUSTOM_ID_MAX - overhead + 1))
