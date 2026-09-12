@@ -1,4 +1,4 @@
-# paxbot
+# pax-schedule-bot
 
 Browse, build and share PAX convention schedules from Discord.
 
