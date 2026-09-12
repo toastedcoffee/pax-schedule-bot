@@ -18,8 +18,9 @@ import discord
 from paxbot.bot import ids, render
 from paxbot.config import Show
 from paxbot.store.events import get_event
+from paxbot.store.queries import search_events
 from paxbot.store.saved import save_event, unsave_event
-from paxbot.views import PanelFilters, find_conflicts, panel_view
+from paxbot.views import PanelFilters, default_filters, find_conflicts, panel_view
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,23 @@ log = logging.getLogger(__name__)
 # controls - at 15 the edit itself would fail and the panel would just sit
 # there looking live.
 PANEL_TIMEOUT_SECONDS = 840
+
+
+async def _apologise(interaction: discord.Interaction, note: str) -> None:
+    """Answer an interaction whose callback raised.
+
+    Without this the interaction goes unanswered and Discord shows a bare
+    "This interaction failed" three seconds later - even when the underlying
+    write succeeded, which is the worst version of it: the user is told the
+    action failed when it did not.
+    """
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(note, ephemeral=True)
+        else:
+            await interaction.response.send_message(note, ephemeral=True)
+    except discord.HTTPException:
+        log.debug("could not report interaction failure", exc_info=True)
 
 
 class SchedulePanel(discord.ui.View):
@@ -82,14 +100,7 @@ class SchedulePanel(discord.ui.View):
         covers every callback on the view.
         """
         log.exception("panel interaction failed", exc_info=error)
-        note = "Something went wrong. Run `/schedule` again."
-        try:
-            if interaction.response.is_done():
-                await interaction.followup.send(note, ephemeral=True)
-            else:
-                await interaction.response.send_message(note, ephemeral=True)
-        except discord.HTTPException:
-            log.debug("could not report panel failure", exc_info=True)
+        await _apologise(interaction, "Something went wrong. Run `/schedule` again.")
 
     async def on_timeout(self) -> None:
         for child in self.children:
@@ -194,7 +205,6 @@ class SchedulePanel(discord.ui.View):
         elif kind == ids.RESET:
             self.filters = PanelFilters(day=self.show.start_date)
         elif kind == ids.NOW:
-            from paxbot.views import default_filters
             self.filters = default_filters(self.conn, self.show,
                                            self.now_factory())
         elif kind == ids.SEARCH:
@@ -223,12 +233,9 @@ class SchedulePanel(discord.ui.View):
             return
 
         # Surfaced, never blocked: overlapping deliberately is legitimate.
-        first = clashes[0]
         tz = ZoneInfo(self.show.timezone)
-        more = f" (and {len(clashes) - 1} more)" if len(clashes) > 1 else ""
         await interaction.response.send_message(
-            f"**{event.title}** overlaps **{first.title}**, "
-            f"{render.local_span(first, tz)}, {first.location}{more}.",
+            render.conflict_text(event, clashes, tz),
             view=ConfirmSave(self, gt_id), ephemeral=True)
 
 
@@ -273,6 +280,15 @@ class ConfirmSave(discord.ui.View):
     async def _cancel(self, interaction: discord.Interaction) -> None:
         await interaction.response.edit_message(content="Not added.", view=None)
 
+    async def on_error(self, interaction: discord.Interaction,
+                       error: Exception, item) -> None:
+        """The save may already have committed before the failure, so say so
+        rather than letting Discord claim the whole action failed."""
+        log.exception("confirm-save interaction failed", exc_info=error)
+        await _apologise(
+            interaction,
+            "Something went wrong finishing that. Check `/me` - it may have saved.")
+
 
 class SearchModal(discord.ui.Modal, title="Search the schedule"):
     """Free text, so it has no 25-option cap - the escape hatch for the 13
@@ -286,7 +302,6 @@ class SearchModal(discord.ui.Modal, title="Search the schedule"):
         self.panel = panel
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        from paxbot.store.queries import search_events
         results = search_events(self.panel.conn, self.panel.show.slug,
                                 str(self.query), limit=10)
         if not results:
@@ -294,8 +309,10 @@ class SearchModal(discord.ui.Modal, title="Search the schedule"):
                 f"No events match “{self.query}”.", ephemeral=True)
             return
         tz = ZoneInfo(self.panel.show.timezone)
-        lines = "\n".join(
-            f"• {render.local_span(e, tz)} · {e.title}" for e in results)
         await interaction.response.send_message(
-            f"**{len(results)} match(es)**\n{lines}\n\n"
-            f"Use `/find` to open one.", ephemeral=True)
+            render.search_results_text(results, tz), ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction,
+                       error: Exception) -> None:
+        log.exception("search modal failed", exc_info=error)
+        await _apologise(interaction, "Search failed. Try `/find` instead.")

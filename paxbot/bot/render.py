@@ -15,6 +15,9 @@ from paxbot.models import Event
 from paxbot.views import PanelState, SavedState
 
 EMBED_TOTAL_MAX = 6000
+# Plain message content (not an embed) has its own cap, and Discord rejects
+# anything longer outright rather than truncating.
+MESSAGE_CONTENT_MAX = 2000
 # Headroom kept free so the "Not shown" and "Removed upstream" notices always
 # fit, plus two reserved field slots for the same reason.
 TOTAL_RESERVE = 400
@@ -238,6 +241,46 @@ def event_embed(show: Show, event: Event, threshold_minutes: int,
                                     EMBED_FIELD_VALUE_MAX),
                         inline=False)
     return embed
+
+
+def search_results_text(events, tz: ZoneInfo) -> str:
+    """Plain message content for a modal search result.
+
+    Lives here rather than in panel.py so it is covered by this project's
+    testing decision: panel.py has no unit tests, and an unbudgeted message is
+    exactly the kind of silent Discord rejection this module exists to prevent.
+    Titles are unbounded upstream, so ten of them can exceed the 2000-character
+    cap however small the result limit is.
+    """
+    header = f"**{len(events)} match(es)**\n"
+    budget = MESSAGE_CONTENT_MAX - len(header) - 40
+    lines: list[str] = []
+    used = 0
+    for event in events:
+        line = _clip(f"• {local_span(event, tz)} · {event.title}", 200)
+        if used + len(line) + 1 > budget:
+            break
+        lines.append(line)
+        used += len(line) + 1
+    text = header + "\n".join(lines)
+    hidden = len(events) - len(lines)
+    if hidden:
+        text += f"\n(+{hidden} more)"
+    return _clip(text, MESSAGE_CONTENT_MAX)
+
+
+def conflict_text(event: Event, clashes, tz: ZoneInfo) -> str:
+    """The "Overlaps X" prompt, naming the specific event.
+
+    Naming matters: with a median of three categories per event and heavy room
+    reuse, "this conflicts with something" would be useless.
+    """
+    first = clashes[0]
+    more = f" (and {len(clashes) - 1} more)" if len(clashes) > 1 else ""
+    text = (f"**{_clip(event.title, 150)}** overlaps "
+            f"**{_clip(first.title, 150)}**, {local_span(first, tz)}, "
+            f"{_clip(first.location, 100)}{more}.")
+    return _clip(text, MESSAGE_CONTENT_MAX)
 
 
 def saved_embed(state: SavedState, threshold_minutes: int) -> discord.Embed:

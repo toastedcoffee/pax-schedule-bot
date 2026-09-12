@@ -218,6 +218,27 @@ def test_saved_embed_reports_removed_events(conn):
     assert "removed" in str(embed.to_dict()).lower()
 
 
+def test_search_results_text_stays_under_the_message_cap():
+    """Ten unbounded titles blow the 2000-character content cap; Discord
+    rejects the whole message rather than truncating it."""
+    events = [make_event(gt_id=str(i), title="T" * 500) for i in range(10)]
+    text = render.search_results_text(events, TZ)
+    assert len(text) <= render.MESSAGE_CONTENT_MAX
+
+
+def test_search_results_text_says_how_many_did_not_fit():
+    events = [make_event(gt_id=str(i), title="T" * 300) for i in range(10)]
+    assert "more)" in render.search_results_text(events, TZ)
+
+
+def test_conflict_text_names_the_event_and_stays_under_the_cap():
+    a = make_event(gt_id="a", title="A" * 500)
+    b = make_event(gt_id="b", title="B" * 500, location="L" * 500)
+    text = render.conflict_text(a, (b, b, b), TZ)
+    assert "and 2 more" in text
+    assert len(text) <= render.MESSAGE_CONTENT_MAX
+
+
 def test_saved_embed_is_helpful_when_empty(conn):
     embed = render.saved_embed(saved_view(conn, SHOW, USER, THRESHOLD), THRESHOLD)
     assert "/schedule" in str(embed.to_dict())
