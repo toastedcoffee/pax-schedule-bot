@@ -71,8 +71,47 @@ def test_panel_embed_stays_under_the_total_character_limit(conn):
     assert len(embed) <= render.EMBED_TOTAL_MAX
 
 
+def test_panel_embed_footer_says_how_many_drop_ins_did_not_fit(conn):
+    """Reachable on real data: Saturday 2pm has 23 drop-ins running, a
+    907-character name list against a 400-character footer cap. Truncating to a
+    bare ellipsis would hide over half of them."""
+    seed(conn, [make_event(gt_id=f"d{i}", hour=17, minutes=600,
+                           title=f"Freeplay Zone Number {i:02} With A Long Name")
+                for i in range(23)])
+    embed = render.panel_embed(state_for(conn))
+    assert "more)" in embed.footer.text
+    assert len(embed.footer.text) <= render.FOOTER_MAX
+
+
+def test_saved_embed_field_budget_leaves_room_for_both_notices():
+    """MAX_SCHEDULE_FIELDS plus the "Not shown" and "Removed upstream" notices
+    must fit Discord's 25-field cap.
+
+    Asserted on the constants rather than through a rendered embed, because no
+    input can reach 23 fields: the character budget binds first in every case.
+    Measured across 5/20/60/200 saved events per day over four days, the field
+    count peaks at 6. That makes MAX_SCHEDULE_FIELDS unreachable
+    belt-and-braces - which is precisely why the two constants need pinning
+    against each other directly. A behavioural test would pass whatever value
+    either one held, and a future edit could put them out of step unnoticed.
+    """
+    assert render.MAX_SCHEDULE_FIELDS + 2 <= 25
+
+
+def test_saved_embed_never_exceeds_the_field_cap_under_load(conn):
+    """The behavioural half: whatever the budgets do, 25 fields is the ceiling."""
+    seed(conn, [make_event(gt_id=str(i), hour=17, minute=i % 60,
+                           title=f"E{i} " + "x" * 90) for i in range(120)])
+    for i in range(120):
+        save_event(conn, USER, "west", str(i))
+    save_event(conn, USER, "west", "ghost")
+    embed = render.saved_embed(saved_view(conn, SHOW, USER, THRESHOLD), THRESHOLD)
+    assert len(embed.fields) <= 25
+    assert len(embed) <= render.EMBED_TOTAL_MAX
+
+
 def test_panel_embed_stays_under_the_limit_with_many_drop_ins(conn):
-    """The footer names every in-window drop-in and counts toward the same 6000."""
+    """The footer counts toward the same 6000 budget as the event fields."""
     seed(conn,
          [make_event(gt_id=f"d{i}", hour=17, minutes=600,
                      title="Drop-in " + "z" * 200) for i in range(20)]

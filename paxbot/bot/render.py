@@ -22,6 +22,9 @@ MAX_SCHEDULE_FIELDS = 23
 # The panel footer names drop-ins; capped far under Discord's 2048 so it
 # cannot eat the budget the event fields need.
 FOOTER_MAX = 400
+# Room for the " (+NNN more)" suffix the footer appends when drop-in names
+# do not all fit.
+MORE_SUFFIX_MAX = 16
 EMBED_DESCRIPTION_MAX = 4096
 EMBED_FIELD_VALUE_MAX = 1024
 SELECT_OPTION_MAX = 25
@@ -120,7 +123,9 @@ def panel_embed(state: PanelState) -> discord.Embed:
     # this page actually holds.
     spare = EMBED_TOTAL_MAX - TOTAL_RESERVE - len(embed) - FOOTER_MAX
     per_event = max(1, spare // max(1, len(state.events)))
-    name_max = min(FIELD_NAME_MAX, per_event // 2)
+    # Floor of 1: Discord requires a non-empty field name, so a vanishing
+    # budget must still yield one character rather than an empty string.
+    name_max = max(1, min(FIELD_NAME_MAX, per_event // 2))
     value_max = min(EMBED_FIELD_VALUE_MAX, per_event - name_max)
     for index, event in enumerate(state.events, start=1):
         star = "⭐ " if event.gt_id in state.saved_ids else ""
@@ -135,8 +140,26 @@ def panel_embed(state: PanelState) -> discord.Embed:
     if state.drop_ins:
         # Named, not counted: "6 drop-ins open now" tells you nothing you can
         # act on. Text only - all five action rows are already spent.
-        names = " · ".join(e.title for e in state.drop_ins)
-        embed.set_footer(text=_clip(f"＋ Open now: {names}", FOOTER_MAX))
+        #
+        # But name as many as fit and then SAY how many did not, rather than
+        # ending on a bare ellipsis. This is reachable on real data, not
+        # theoretical: Saturday 2pm on the PAX West 2026 schedule has 23
+        # drop-ins running, a 907-character list against a 400-character cap.
+        prefix = "＋ Open now: "
+        budget = FOOTER_MAX - len(prefix) - MORE_SUFFIX_MAX
+        shown: list[str] = []
+        used = 0
+        for event in state.drop_ins:
+            cost = len(event.title) + (3 if shown else 0)
+            if used + cost > budget:
+                break
+            shown.append(event.title)
+            used += cost
+        text = prefix + " · ".join(shown)
+        hidden = len(state.drop_ins) - len(shown)
+        if hidden:
+            text += f" (+{hidden} more)"
+        embed.set_footer(text=_clip(text, FOOTER_MAX))
     return embed
 
 
