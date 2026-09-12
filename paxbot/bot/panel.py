@@ -234,9 +234,19 @@ class SchedulePanel(discord.ui.View):
 
         # Surfaced, never blocked: overlapping deliberately is legitimate.
         tz = ZoneInfo(self.show.timezone)
+        confirm = ConfirmSave(self.conn, self.show, self.user_id, gt_id, panel=self)
         await interaction.response.send_message(
             render.conflict_text(event, clashes, tz),
-            view=ConfirmSave(self, gt_id), ephemeral=True)
+            view=confirm, ephemeral=True)
+        try:
+            confirm.message = await interaction.original_response()
+        except discord.HTTPException:
+            # Same reasoning as the panel's own message capture below: without
+            # this handle on_timeout cannot edit the prompt, and it silently
+            # stays live-looking after Discord drops it.
+            log.warning(
+                "could not capture confirm-save message; timeout will be silent",
+                exc_info=True)
 
 
 def _with_page(filters: PanelFilters, page: int) -> PanelFilters:
@@ -245,12 +255,24 @@ def _with_page(filters: PanelFilters, page: int) -> PanelFilters:
 
 
 class ConfirmSave(discord.ui.View):
-    """Add anyway / Cancel. Short-lived; it belongs to one decision."""
+    """Add anyway / Cancel. Short-lived; it belongs to one decision.
 
-    def __init__(self, panel: SchedulePanel, gt_id: str):
-        super().__init__(timeout=120)
-        self.panel = panel
+    Usable with or without a parent panel: /find hits the same conflict
+    prompt as /schedule's star button, but has no panel message to refresh.
+    Timeout matches the panel's own - Discord kills the interaction token at
+    15 minutes, and 840s leaves on_timeout a minute to still edit the message
+    before the token itself would refuse the edit.
+    """
+
+    def __init__(self, conn, show: Show, user_id: int, gt_id: str,
+                panel: "SchedulePanel | None" = None):
+        super().__init__(timeout=PANEL_TIMEOUT_SECONDS)
+        self.conn = conn
+        self.show = show
+        self.user_id = user_id
         self.gt_id = gt_id
+        self.panel = panel
+        self.message: discord.Message | None = None
 
         confirm = discord.ui.Button(
             label="Add anyway", style=discord.ButtonStyle.primary,
@@ -265,20 +287,35 @@ class ConfirmSave(discord.ui.View):
         self.add_item(cancel)
 
     async def _confirm(self, interaction: discord.Interaction) -> None:
-        save_event(self.panel.conn, str(self.panel.user_id),
-                   self.panel.show.slug, self.gt_id)
-        self.panel.state = self.panel._load()
-        self.panel.rebuild()
-        if self.panel.message is not None:
-            try:
-                await self.panel.message.edit(embed=self.panel.embed(),
-                                              view=self.panel)
-            except discord.HTTPException:
-                log.debug("panel refresh after confirm failed", exc_info=True)
+        save_event(self.conn, str(self.user_id), self.show.slug, self.gt_id)
+        if self.panel is not None:
+            self.panel.state = self.panel._load()
+            self.panel.rebuild()
+            if self.panel.message is not None:
+                try:
+                    await self.panel.message.edit(embed=self.panel.embed(),
+                                                  view=self.panel)
+                except discord.HTTPException:
+                    log.debug("panel refresh after confirm failed", exc_info=True)
         await interaction.response.edit_message(content="Added.", view=None)
 
     async def _cancel(self, interaction: discord.Interaction) -> None:
         await interaction.response.edit_message(content="Not added.", view=None)
+
+    async def on_timeout(self) -> None:
+        """Discord drops the view after timeout regardless, leaving live-
+        looking buttons that yield a bare "This interaction failed" - the same
+        failure mode SchedulePanel.on_timeout exists to avoid."""
+        for child in self.children:
+            child.disabled = True
+        if self.message is None:
+            return
+        try:
+            await self.message.edit(
+                content="This prompt expired — star the event again.",
+                view=self)
+        except discord.HTTPException:
+            log.debug("confirm-save timeout edit failed", exc_info=True)
 
     async def on_error(self, interaction: discord.Interaction,
                        error: Exception, item) -> None:

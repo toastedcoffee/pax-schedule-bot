@@ -15,11 +15,11 @@ import discord
 from discord import app_commands
 
 from paxbot.bot import render
-from paxbot.bot.panel import SchedulePanel, _apologise
+from paxbot.bot.panel import ConfirmSave, SchedulePanel, _apologise
 from paxbot.config import Config, Show
 from paxbot.store.events import get_event
 from paxbot.store.queries import count_matches_before, search_events, upcoming_events
-from paxbot.store.saved import save_event, saved_gt_ids
+from paxbot.store.saved import save_event, saved_gt_ids, unsave_event
 from paxbot.views import default_filters, find_conflicts, saved_view
 
 log = logging.getLogger(__name__)
@@ -104,11 +104,12 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
             await _find_freetext(interaction, deps, show, query, day)
             return
         saved = saved_gt_ids(deps.conn, str(interaction.user.id), show.slug)
+        is_saved = event.gt_id in saved
         await interaction.response.send_message(
             embed=render.event_embed(show, event,
                                      deps.config.drop_in_threshold_minutes,
-                                     saved=event.gt_id in saved),
-            view=_FindResult(deps, show, event),
+                                     saved=is_saved),
+            view=_FindResult(deps, show, event, saved=is_saved),
             ephemeral=True)
 
     @find.autocomplete("query")
@@ -219,37 +220,65 @@ async def _find_freetext(interaction, deps, show, query, day):
 
 
 class _FindResult(discord.ui.View):
-    """A single event card with a star button."""
+    """A single event card with a star/unstar toggle button.
 
-    def __init__(self, deps: BotDeps, show: Show, event):
+    /find is a one-off lookup with no fixed position like the panel's grid,
+    so it cannot rely on the user navigating back to unstar - the button
+    itself has to switch to "remove" once the event is already saved.
+    """
+
+    def __init__(self, deps: BotDeps, show: Show, event, saved: bool):
         super().__init__(timeout=840)
         self.deps = deps
         self.show = show
         self.event = event
 
         from paxbot.bot import ids
-        button = discord.ui.Button(label="⭐ Add to my schedule",
-                                   style=discord.ButtonStyle.primary,
-                                   custom_id=ids.encode(ids.STAR, event.gt_id))
-        button.callback = self._save
+        if saved:
+            button = discord.ui.Button(
+                label="☆ Remove from my schedule",
+                style=discord.ButtonStyle.secondary,
+                custom_id=ids.encode(ids.UNSTAR, event.gt_id))
+            button.callback = self._unsave
+        else:
+            button = discord.ui.Button(
+                label="⭐ Add to my schedule",
+                style=discord.ButtonStyle.primary,
+                custom_id=ids.encode(ids.STAR, event.gt_id))
+            button.callback = self._save
         self.add_item(button)
 
     async def _save(self, interaction: discord.Interaction):
+        # Mirrors SchedulePanel._on_star: compute conflicts and only save when
+        # there are none. Saving unconditionally and reporting "but X overlaps"
+        # afterwards was a second, non-conformant conflict flow - one flow,
+        # with Add anyway / Cancel, everywhere.
         threshold = self.deps.config.drop_in_threshold_minutes
         clashes = find_conflicts(self.deps.conn, self.show,
                                  str(interaction.user.id), self.event, threshold)
-        save_event(self.deps.conn, str(interaction.user.id), self.show.slug,
-                   self.event.gt_id)
         if clashes:
-            # Prefix passed IN, so it is inside the helper's budget rather
-            # than bolted on outside its clip.
+            # Surfaced, never blocked: overlapping deliberately is legitimate.
+            confirm = ConfirmSave(self.deps.conn, self.show,
+                                  interaction.user.id, self.event.gt_id)
             await interaction.response.send_message(
                 render.conflict_text(self.event, clashes,
-                                     ZoneInfo(self.show.timezone),
-                                     prefix="Added — but "),
-                ephemeral=True)
+                                     ZoneInfo(self.show.timezone)),
+                view=confirm, ephemeral=True)
+            try:
+                confirm.message = await interaction.original_response()
+            except discord.HTTPException:
+                log.warning(
+                    "could not capture confirm-save message; timeout will be silent",
+                    exc_info=True)
             return
+        save_event(self.deps.conn, str(interaction.user.id), self.show.slug,
+                   self.event.gt_id)
         await interaction.response.send_message("Added.", ephemeral=True)
+
+    async def _unsave(self, interaction: discord.Interaction):
+        unsave_event(self.deps.conn, str(interaction.user.id), self.show.slug,
+                    self.event.gt_id)
+        await interaction.response.send_message("Removed.", ephemeral=True)
 
     async def on_error(self, interaction: discord.Interaction,
                        error: Exception, item) -> None:
