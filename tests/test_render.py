@@ -96,8 +96,15 @@ def test_chunk_lines_never_emits_an_oversized_block():
 
 
 def test_event_embed_survives_a_very_long_location():
-    """An unbounded location must not drive the description budget negative."""
-    event = make_event(title="T" * 122, location="L" * 4000)
+    """An unbounded location must not drive the description budget negative.
+
+    6000, not 4000: below roughly 4100 the _clip non-positive guard alone keeps
+    the result legal, so a shorter location leaves this test unable to tell
+    whether the location is really being clipped into the header. Measured
+    without that clip, a 6000-character location yields a 4096-limit
+    description of 6025.
+    """
+    event = make_event(title="T" * 122, location="L" * 6000)
     event = type(event)(**{**event.__dict__, "description": "D" * 8000})
     embed = render.event_embed(SHOW, event, THRESHOLD, saved=False)
     assert len(embed) <= render.EMBED_TOTAL_MAX
