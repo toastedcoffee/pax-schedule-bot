@@ -68,6 +68,30 @@ def _overlaps(event: Event, start: datetime, end: datetime) -> bool:
     return event.starts_at < end and event.ends_at > start
 
 
+def _spanned_hours(events, day: date, tz: ZoneInfo) -> tuple[int, ...]:
+    """Every local hour of `day` in which at least one event is running.
+
+    Spanned, not started. The panel filters by overlap, so the hour options
+    have to be the hours something is actually running in. Deriving them from
+    start times alone makes each day's final hour unreachable: on real PAX West
+    2026 data nothing starts at 11pm on Friday or Saturday, yet events run
+    until midnight, so "Running at 11pm" could never be selected.
+
+    Capped implicitly at 24 entries by the day itself, so it can never overflow
+    Discord's 25-option select even with the "All day" entry added.
+    """
+    hours: set[int] = set()
+    for event in events:
+        start = event.starts_at.astimezone(tz)
+        end = event.ends_at.astimezone(tz)
+        cursor = start.replace(minute=0, second=0, microsecond=0)
+        while cursor < end:
+            if cursor.date() == day:
+                hours.add(cursor.hour)
+            cursor += timedelta(hours=1)
+    return tuple(sorted(hours))
+
+
 def panel_view(
     conn: sqlite3.Connection,
     show: Show,
@@ -82,10 +106,17 @@ def panel_view(
     window needs the show's timezone, which the store layer must not know, and
     a day is at most ~206 rows.
     """
+    tz = ZoneInfo(show.timezone)
     day_events = events_for_day(conn, show.slug, filters.day,
                                 category=filters.category)
-    tz = ZoneInfo(show.timezone)
-    hours = tuple(sorted({e.starts_at.astimezone(tz).hour for e in day_events}))
+
+    # Hour options are computed from the WHOLE day, not the category-filtered
+    # subset, so a sibling filter never shrinks them under the user. This is the
+    # same rule `categories` already follows below - it draws from the whole
+    # show rather than narrowing by the selected day or hour.
+    unfiltered = (day_events if filters.category is None
+                  else events_for_day(conn, show.slug, filters.day))
+    hours = _spanned_hours(unfiltered, filters.day, tz)
 
     start, end = _window(show, filters.day, filters.hour)
     in_window = [e for e in day_events if _overlaps(e, start, end)]

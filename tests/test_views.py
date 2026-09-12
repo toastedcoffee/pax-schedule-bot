@@ -119,6 +119,30 @@ def test_hours_come_from_the_day_not_a_fixed_range(conn):
     assert state.hours == (10, 15)
 
 
+def test_hours_include_an_hour_where_nothing_starts(conn):
+    """The panel filters by overlap, so an hour with a running event must be
+    selectable even when nothing starts in it. On real PAX West data nothing
+    starts at 11pm on Friday, yet events run until midnight - deriving hours
+    from start times alone makes that hour unreachable."""
+    seed(conn, [make_event(gt_id="long", hour=17, minutes=180)])  # 10:00-13:00
+    state = panel_view(conn, SHOW, filters(), USER, THRESHOLD,
+                       datetime(2026, 9, 4, 18, 0, tzinfo=UTC))
+    assert state.hours == (10, 11, 12)
+
+
+def test_hours_are_not_narrowed_by_the_category_filter(conn):
+    """Sibling facets must not shrink each other's options, or the hour list
+    changes under the user when they pick a category."""
+    seed(conn, [
+        make_event(gt_id="t", hour=17, categories=("Tabletop",)),   # 10:00
+        make_event(gt_id="p", hour=22, categories=("Panels",)),     # 15:00
+    ])
+    state = panel_view(conn, SHOW, filters(category="Panels"), USER, THRESHOLD,
+                       datetime(2026, 9, 4, 18, 0, tzinfo=UTC))
+    assert [e.gt_id for e in state.events] == ["p"]
+    assert state.hours == (10, 15)
+
+
 def test_categories_are_capped_at_the_select_limit(conn):
     seed(conn, [make_event(gt_id=str(i), hour=17, minute=i,
                            categories=(f"Cat{i:02}",)) for i in range(30)])
