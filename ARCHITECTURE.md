@@ -8,8 +8,14 @@ paxbot has six layers. Each knows as little as possible about the others.
 | Sync | `paxbot/sync/` | sources, store | `discord` |
 | Store | `paxbot/store/` | SQL | `httpx`, `discord` |
 | View models | `paxbot/views.py` | store, config | `discord`, `httpx` |
-| Bot | `paxbot/bot/` | Discord, views | `httpx`, `sqlite3` |
+| Bot | `paxbot/bot/` | Discord, views, store | `httpx` |
 | Composition root | `paxbot/app.py` | everything | — |
+
+`httpx` is the boundary that actually matters: it is what keeps fetching
+confined to `sync/`, and that rule stands as written. `bot/` importing
+`sqlite3` and reading the store directly (`paxbot/bot/commands.py` and
+`paxbot/bot/panel.py` both do) is accepted, because `paxbot/store/` is
+already the tested layer, not a fresh untested surface.
 
 ## Why
 

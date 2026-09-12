@@ -11,7 +11,14 @@ Self-hosted. Your data stays on your machine.
 
 ## Status
 
-Phase 1: the data layer and a CLI. Discord commands are not implemented yet.
+The data layer, sync job, CLI and Discord bot are all built and working. The
+bot serves three slash commands — `/schedule`, `/find` and `/me` — and syncs
+itself on a loop once it is running, so nothing external needs to trigger a
+sync anymore. The CLI's `sync` and `list` subcommands are still there too,
+mainly for checking the store directly without going through Discord.
+
+In the Discord Developer Portal the application is registered as **Lanyard
+Bot**; the package, repo and CLI all stay `paxbot`.
 
 ## Two ways to run it
 
@@ -22,9 +29,10 @@ Docker at all. Pick one.
 
 ### Option A: Docker (recommended)
 
-Phase 1 has no long-running process — the CLI runs and exits — so the Compose
-service is invoked on demand rather than kept up. Phase 2's Discord bot will
-become a `restart: unless-stopped` service using the same image.
+`compose.yml` runs the bot (`paxbot bot`) as a long-running
+`restart: unless-stopped` service — that is what `docker compose up` starts
+by default. The CLI's `sync` and `list` subcommands still work against the
+same image for one-off use; see "Run a one-off command" below.
 
 **Build the image:**
 
@@ -38,12 +46,24 @@ root, which uid 10001 cannot write to:
     mkdir -p ./data
     sudo chown 10001:10001 ./data
 
-**Run a sync:**
+**Create your `.env`:**
+
+    cp .env.example .env
+
+Then set `DISCORD_TOKEN` inside it (Developer Portal -> your application ->
+Bot -> Reset Token) and adjust the other variables if you need to — see the
+env-var tables below. `compose.yml` sets `env_file: .env`, which Compose
+treats as **required**: `docker compose up` aborts immediately if `.env`
+does not exist.
+
+**Start the bot:**
+
+    docker compose up -d
+
+**Run a one-off command** (does not require the bot to be running; uses the
+same image and data):
 
     docker compose run --rm paxbot sync
-
-**List a day:**
-
     docker compose run --rm paxbot list --day 2026-09-04 --category Panels
 
 The database lives at `/data/paxbot.db` inside the container (set via the
@@ -70,11 +90,12 @@ because SQLite's WAL mode relies on locking guarantees those do not reliably
 provide, and a bind mount over such a share can corrupt the database or hang.
 
 The container publishes no ports — the bot only makes outbound connections to
-the PAX schedule API (and, in phase 2, to Discord).
+the PAX schedule API and to Discord.
 
-Scheduling a recurring sync is an external concern for now: add a cron entry
-or a TrueNAS scheduled task that runs `docker compose run --rm paxbot sync`
-on whatever cadence you want.
+The bot syncs itself on a loop while it is running, so no external cron job
+or scheduled task is needed to keep the schedule fresh. A cron entry running
+`docker compose run --rm paxbot sync` is only useful if you want the CLI's
+data kept current without running the bot at all.
 
 ### Option B: Standalone Python
 
@@ -110,6 +131,20 @@ whether you're in a container or running standalone:
 
 `--category` must match the upstream category string exactly, including case
 ("Panels" will not match "panels").
+
+### Bot environment variables
+
+`paxbot bot` has no flags — everything comes from the environment, which
+under Docker means `.env` (see `.env.example`; `compose.yml` loads it via
+`env_file`). `PAXBOT_DB` and `PAXBOT_CONFIG` above apply here too — both run
+paths resolve the database and config the same way.
+
+| Variable | Required | Default | Meaning |
+|---|---|---|---|
+| `DISCORD_TOKEN` | yes | — | Bot token from the Developer Portal (Bot -> Reset Token) |
+| `PAXBOT_SHOW` | no | `west` | Which `shows.toml` block the bot serves |
+| `PAXBOT_GUILD_ID` | no | none (registers globally) | Registers slash commands to one server instantly instead of waiting up to an hour for a global rollout |
+| `PAXBOT_LOG_LEVEL` | no | `INFO` | Python logging level |
 
 ## Adding another PAX
 
