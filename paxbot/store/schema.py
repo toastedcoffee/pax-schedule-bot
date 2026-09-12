@@ -43,4 +43,19 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     ok           INTEGER NOT NULL,
     note         TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS saved (
+    user_id   TEXT NOT NULL,          -- Discord snowflake, as text
+    show_slug TEXT NOT NULL,
+    gt_id     TEXT NOT NULL,
+    saved_at  TEXT NOT NULL,          -- ISO 8601 UTC
+    PRIMARY KEY (user_id, show_slug, gt_id)
+);
+
+-- Deliberately NO foreign key to events. A saved row must survive any future
+-- surgery on the events table; a cascade that silently deleted someone's
+-- schedule is the exact failure the retain-don't-delete rule exists to prevent.
+
+CREATE INDEX IF NOT EXISTS idx_saved_user
+    ON saved (user_id, show_slug);
 """

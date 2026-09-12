@@ -190,7 +190,11 @@ def test_a_pre_ordinal_database_is_migrated_not_just_stamped(tmp_path):
     conn = connect(path)
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(event_categories)")}
     assert "ordinal" in columns
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    # Was hardcoded `== 1`; that stamped-version literal predates schema v2
+    # and this line, uniquely in this file, never referenced the SCHEMA_VERSION
+    # symbol its sibling assertion above (line 149) already uses. The test's
+    # intent - "stamped to the current version" - is unchanged.
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     # and the pre-existing data is still queryable
     assert [e.gt_id for e in events_for_day(conn, "west", date(2026, 9, 4))] == ["1"]
     conn.close()

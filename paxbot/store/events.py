@@ -21,6 +21,7 @@ def _to_event(row: sqlite3.Row, categories: tuple[str, ...]) -> Event:
         url=row["url"],
         categories=categories,
         row_hash=row["row_hash"],
+        cancelled=bool(row["cancelled"]),
     )
 
 
