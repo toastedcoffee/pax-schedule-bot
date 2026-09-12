@@ -4,7 +4,7 @@ import pytest
 
 from paxbot.config import Show
 from paxbot.store.db import transaction
-from paxbot.store.events import upsert_events
+from paxbot.store.events import mark_cancelled, upsert_events
 from paxbot.store.saved import save_event
 from paxbot.views import PAGE_SIZE, PanelFilters, default_filters, panel_view
 from tests.conftest import make_event
@@ -259,3 +259,28 @@ def test_saved_view_reports_removed_events(conn):
     save_event(conn, USER, "west", "ghost")
     state = saved_view(conn, SHOW, USER, THRESHOLD)
     assert state.missing == ("ghost",)
+
+
+def test_a_cancelled_saved_event_does_not_raise_a_conflict(conn):
+    """A cancelled event is not happening, so the slot it held is free."""
+    seed(conn, [make_event(gt_id="dead", title="Cancelled Panel",
+                           hour=17, minutes=120),
+                make_event(gt_id="new", hour=18, minutes=60)])
+    with transaction(conn):
+        mark_cancelled(conn, "west", ["dead"])
+    save_event(conn, USER, "west", "dead")
+    from paxbot.store.events import get_event
+    assert find_conflicts(conn, SHOW, USER,
+                          get_event(conn, "west", "new"), THRESHOLD) == ()
+
+
+def test_saved_view_does_not_flag_conflicts_against_cancelled_events(conn):
+    seed(conn, [make_event(gt_id="dead", hour=17, minutes=120),
+                make_event(gt_id="live", hour=18, minutes=60)])
+    with transaction(conn):
+        mark_cancelled(conn, "west", ["dead"])
+    save_event(conn, USER, "west", "dead")
+    save_event(conn, USER, "west", "live")
+    state = saved_view(conn, SHOW, USER, THRESHOLD)
+    assert [e.gt_id for e in state.days[0].events] == ["dead", "live"]
+    assert state.days[0].conflict_ids == frozenset()

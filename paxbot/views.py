@@ -188,13 +188,19 @@ def find_conflicts(
     event with a real end time, but not a scheduling commitment: letting one
     conflict with everything else that day would train users to click through
     warnings, destroying the feature that matters most.
+
+    Cancelled events are excluded on both sides too. A cancelled event stays on
+    a saved schedule and still renders, marked - but it is not happening, so
+    warning that something "overlaps" it is noise about a slot that is in fact
+    free.
     """
-    if event.is_drop_in(threshold_minutes):
+    if event.is_drop_in(threshold_minutes) or event.cancelled:
         return ()
     clashes = [
         other
         for other in saved_events(conn, user_id, show.slug)
         if other.gt_id != event.gt_id
+        and not other.cancelled
         and not other.is_drop_in(threshold_minutes)
         and _overlaps(other, event.starts_at, event.ends_at)
     ]
@@ -220,7 +226,10 @@ def saved_view(
     days = []
     for d in sorted(by_day):
         same_day = by_day[d]
-        blocking = [e for e in same_day if not e.is_drop_in(threshold_minutes)]
+        # Cancelled events still render (marked), but cannot clash with
+        # anything - the slot they occupied is free.
+        blocking = [e for e in same_day
+                    if not e.is_drop_in(threshold_minutes) and not e.cancelled]
         # Both sides of a clashing pair are flagged, so /me marks the two
         # events that overlap rather than only the later one.
         clashing: set[str] = set()
