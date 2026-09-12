@@ -47,6 +47,13 @@ def test_kinds_are_unique():
     assert len(set(ids.ALL_KINDS)) == len(ids.ALL_KINDS)
 
 
+def test_rejects_a_non_ascii_argument():
+    """Discord's cap is not counted in Python code points, so a non-ASCII arg
+    could pass len() and still be silently rejected by Discord."""
+    with pytest.raises(ids.IdError, match="ASCII"):
+        ids.encode(ids.STAR, "\U0001f600")
+
+
 def test_accepts_an_id_of_exactly_the_limit():
     """100 characters is legal, 101 is not.
 

@@ -38,6 +38,16 @@ def encode(kind: str, arg: str = "") -> str:
         raise IdError(f"unknown kind {kind!r}")
     if SEP in arg:
         raise IdError(f"argument {arg!r} contains the separator {SEP!r}")
+    if not arg.isascii():
+        # The 100 below is counted in Python code points. Discord has counted
+        # some limits in UTF-16 units, where one astral-plane character costs
+        # two - so a non-ASCII argument could pass this check and still leave
+        # the component silently inert, the exact failure this module exists to
+        # prevent. Every argument this project encodes is a numeric event id
+        # (all 713 in the live PAX West payload are six ASCII digits), so
+        # refusing non-ASCII costs nothing and turns a silent remote failure
+        # into a loud local one.
+        raise IdError(f"argument {arg!r} is not ASCII")
     built = f"{PREFIX}{SEP}{kind}{SEP}{arg}"
     if len(built) > CUSTOM_ID_MAX:
         raise IdError(
