@@ -19,7 +19,7 @@ from paxbot.config import Show
 from paxbot.models import Event
 from paxbot.store.events import events_for_day
 from paxbot.store.queries import distinct_categories
-from paxbot.store.saved import saved_gt_ids
+from paxbot.store.saved import missing_saved_ids, saved_events, saved_gt_ids
 
 PAGE_SIZE = 6
 # Discord caps a select at 25 options; one slot is spent on "All categories".
@@ -158,3 +158,83 @@ def default_filters(conn: sqlite3.Connection, show: Show,
         local = now.astimezone(ZoneInfo(show.timezone))
         return PanelFilters(day=local.date(), hour=local.hour)
     return PanelFilters(day=show.start_date, hour=None)
+
+
+@dataclass(frozen=True)
+class SavedDay:
+    day: date
+    events: tuple[Event, ...]
+    conflict_ids: frozenset[str]
+
+
+@dataclass(frozen=True)
+class SavedState:
+    show: Show
+    days: tuple[SavedDay, ...]
+    missing: tuple[str, ...]   # saved ids whose event no longer exists
+    total: int
+
+
+def find_conflicts(
+    conn: sqlite3.Connection,
+    show: Show,
+    user_id: str,
+    event: Event,
+    threshold_minutes: int,
+) -> tuple[Event, ...]:
+    """Saved events overlapping `event`, earliest first. Empty means no clash.
+
+    Drop-ins are excluded on BOTH sides. An all-day freeplay zone is a real
+    event with a real end time, but not a scheduling commitment: letting one
+    conflict with everything else that day would train users to click through
+    warnings, destroying the feature that matters most.
+    """
+    if event.is_drop_in(threshold_minutes):
+        return ()
+    clashes = [
+        other
+        for other in saved_events(conn, user_id, show.slug)
+        if other.gt_id != event.gt_id
+        and not other.is_drop_in(threshold_minutes)
+        and _overlaps(other, event.starts_at, event.ends_at)
+    ]
+    return tuple(clashes)
+
+
+def saved_view(
+    conn: sqlite3.Connection,
+    show: Show,
+    user_id: str,
+    threshold_minutes: int,
+    day: date | None = None,
+) -> SavedState:
+    """The /me schedule, grouped by day with conflicts flagged in place."""
+    events = saved_events(conn, user_id, show.slug)
+    if day is not None:
+        events = [e for e in events if e.day == day]
+
+    by_day: dict[date, list[Event]] = {}
+    for event in events:
+        by_day.setdefault(event.day, []).append(event)
+
+    days = []
+    for d in sorted(by_day):
+        same_day = by_day[d]
+        blocking = [e for e in same_day if not e.is_drop_in(threshold_minutes)]
+        # Both sides of a clashing pair are flagged, so /me marks the two
+        # events that overlap rather than only the later one.
+        clashing: set[str] = set()
+        for i, first in enumerate(blocking):
+            for second in blocking[i + 1:]:
+                if _overlaps(first, second.starts_at, second.ends_at):
+                    clashing.add(first.gt_id)
+                    clashing.add(second.gt_id)
+        days.append(SavedDay(day=d, events=tuple(same_day),
+                             conflict_ids=frozenset(clashing)))
+
+    return SavedState(
+        show=show,
+        days=tuple(days),
+        missing=missing_saved_ids(conn, user_id, show.slug),
+        total=len(events),
+    )

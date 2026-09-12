@@ -172,3 +172,90 @@ def test_default_filters_before_the_show_use_day_one_and_no_hour(conn):
     f = default_filters(conn, SHOW, now)
     assert f.day == date(2026, 9, 4)
     assert f.hour is None
+
+
+from paxbot.views import find_conflicts, saved_view
+
+
+def test_no_conflict_when_times_do_not_overlap(conn):
+    seed(conn, [make_event(gt_id="a", hour=17, minutes=60),
+                make_event(gt_id="b", hour=19, minutes=60)])
+    save_event(conn, USER, "west", "a")
+    from paxbot.store.events import get_event
+    new = get_event(conn, "west", "b")
+    assert find_conflicts(conn, SHOW, USER, new, THRESHOLD) == ()
+
+
+def test_conflict_is_detected_and_names_the_event(conn):
+    seed(conn, [make_event(gt_id="a", title="Keynote", hour=17, minutes=120),
+                make_event(gt_id="b", hour=18, minutes=60)])
+    save_event(conn, USER, "west", "a")
+    from paxbot.store.events import get_event
+    got = find_conflicts(conn, SHOW, USER, get_event(conn, "west", "b"), THRESHOLD)
+    assert [e.title for e in got] == ["Keynote"]
+
+
+def test_touching_events_do_not_conflict(conn):
+    """A 10:00-11:00 and an 11:00-12:00 are back to back, not overlapping."""
+    seed(conn, [make_event(gt_id="a", hour=17, minutes=60),
+                make_event(gt_id="b", hour=18, minutes=60)])
+    save_event(conn, USER, "west", "a")
+    from paxbot.store.events import get_event
+    assert find_conflicts(conn, SHOW, USER, get_event(conn, "west", "b"),
+                          THRESHOLD) == ()
+
+
+def test_a_drop_in_never_raises_a_conflict(conn):
+    seed(conn, [make_event(gt_id="lounge", hour=17, minutes=600),
+                make_event(gt_id="panel", hour=18, minutes=60)])
+    save_event(conn, USER, "west", "lounge")
+    from paxbot.store.events import get_event
+    assert find_conflicts(conn, SHOW, USER, get_event(conn, "west", "panel"),
+                          THRESHOLD) == ()
+
+
+def test_saving_a_drop_in_never_reports_conflicts(conn):
+    seed(conn, [make_event(gt_id="panel", hour=17, minutes=60),
+                make_event(gt_id="lounge", hour=17, minutes=600)])
+    save_event(conn, USER, "west", "panel")
+    from paxbot.store.events import get_event
+    assert find_conflicts(conn, SHOW, USER, get_event(conn, "west", "lounge"),
+                          THRESHOLD) == ()
+
+
+def test_an_event_does_not_conflict_with_itself(conn):
+    seed(conn, [make_event(gt_id="a", hour=17, minutes=60)])
+    save_event(conn, USER, "west", "a")
+    from paxbot.store.events import get_event
+    assert find_conflicts(conn, SHOW, USER, get_event(conn, "west", "a"),
+                          THRESHOLD) == ()
+
+
+def test_saved_view_groups_by_day_and_flags_conflicts(conn):
+    seed(conn, [
+        make_event(gt_id="a", hour=17, minutes=120, day=FRI),
+        make_event(gt_id="b", hour=18, minutes=60, day=FRI),
+        make_event(gt_id="c", hour=17, minutes=60, day=date(2026, 9, 5)),
+    ])
+    for gt in ("a", "b", "c"):
+        save_event(conn, USER, "west", gt)
+    state = saved_view(conn, SHOW, USER, THRESHOLD)
+    assert [d.day for d in state.days] == [FRI, date(2026, 9, 5)]
+    assert state.days[0].conflict_ids == frozenset({"a", "b"})
+    assert state.days[1].conflict_ids == frozenset()
+    assert state.total == 3
+
+
+def test_saved_view_filters_to_one_day(conn):
+    seed(conn, [make_event(gt_id="a", day=FRI),
+                make_event(gt_id="c", day=date(2026, 9, 5))])
+    save_event(conn, USER, "west", "a")
+    save_event(conn, USER, "west", "c")
+    state = saved_view(conn, SHOW, USER, THRESHOLD, day=FRI)
+    assert [d.day for d in state.days] == [FRI]
+
+
+def test_saved_view_reports_removed_events(conn):
+    save_event(conn, USER, "west", "ghost")
+    state = saved_view(conn, SHOW, USER, THRESHOLD)
+    assert state.missing == ("ghost",)
