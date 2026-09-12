@@ -53,14 +53,55 @@ def test_panel_embed_says_so_when_the_store_is_empty(conn):
 
 
 def test_panel_embed_stays_under_the_total_character_limit(conn):
-    """Six 122-character titles with long locations must still fit in 6000."""
+    """Titles and locations pushed to their own per-field clip ceilings.
+
+    Per-field clips alone cannot keep the embed legal: a full page at
+    FIELD_NAME_MAX + EMBED_FIELD_VALUE_MAX is 6 x 1280 = 7680, already over
+    Discord's 6000 for the whole message. Upstream titles and locations are
+    unbounded, so the budget has to be taken from the total, not the field.
+    Seeding merely realistic sizes (122-char titles) lands at ~1552 and proves
+    nothing.
+    """
     seed(conn, [
-        make_event(gt_id=str(i), hour=17, minute=i, title="T" * 122,
-                   location="L" * 100)
+        make_event(gt_id=str(i), hour=17, minute=i, title="T" * 500,
+                   location="L" * 2000)
         for i in range(12)
     ])
     embed = render.panel_embed(state_for(conn))
     assert len(embed) <= render.EMBED_TOTAL_MAX
+
+
+def test_panel_embed_stays_under_the_limit_with_many_drop_ins(conn):
+    """The footer names every in-window drop-in and counts toward the same 6000."""
+    seed(conn,
+         [make_event(gt_id=f"d{i}", hour=17, minutes=600,
+                     title="Drop-in " + "z" * 200) for i in range(20)]
+         + [make_event(gt_id=str(i), hour=17, minute=i, title="T" * 500,
+                       location="L" * 2000) for i in range(12)])
+    embed = render.panel_embed(state_for(conn))
+    assert len(embed) <= render.EMBED_TOTAL_MAX
+
+
+def test_clip_returns_empty_for_a_non_positive_limit():
+    """Python's negative slicing keeps almost the whole string, so a negative
+    budget must be caught rather than passed through."""
+    assert render._clip("x" * 500, 0) == ""
+    assert render._clip("x" * 500, -300) == ""
+
+
+def test_chunk_lines_never_emits_an_oversized_block():
+    """One line longer than the limit must still not produce an illegal field."""
+    blocks = render._chunk_lines(["y" * 3000, "short"], 1024)
+    assert blocks and all(len(b) <= 1024 for b in blocks)
+
+
+def test_event_embed_survives_a_very_long_location():
+    """An unbounded location must not drive the description budget negative."""
+    event = make_event(title="T" * 122, location="L" * 4000)
+    event = type(event)(**{**event.__dict__, "description": "D" * 8000})
+    embed = render.event_embed(SHOW, event, THRESHOLD, saved=False)
+    assert len(embed) <= render.EMBED_TOTAL_MAX
+    assert len(embed.description) <= render.EMBED_DESCRIPTION_MAX
 
 
 def test_panel_embed_field_count_stays_under_the_limit(conn):

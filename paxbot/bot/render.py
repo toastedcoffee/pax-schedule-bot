@@ -19,6 +19,9 @@ EMBED_TOTAL_MAX = 6000
 # fit, plus two reserved field slots for the same reason.
 TOTAL_RESERVE = 400
 MAX_SCHEDULE_FIELDS = 23
+# The panel footer names drop-ins; capped far under Discord's 2048 so it
+# cannot eat the budget the event fields need.
+FOOTER_MAX = 400
 EMBED_DESCRIPTION_MAX = 4096
 EMBED_FIELD_VALUE_MAX = 1024
 SELECT_OPTION_MAX = 25
@@ -31,7 +34,15 @@ ACCENT = discord.Colour(0x5865F2)
 
 
 def _clip(text: str, limit: int) -> str:
-    """Truncate with an ellipsis. Discord rejects over-length values outright."""
+    """Truncate with an ellipsis. Discord rejects over-length values outright.
+
+    A non-positive limit returns empty rather than falling through to Python's
+    negative slicing, which keeps almost the whole string - the exact opposite
+    of clipping, and wrong precisely when the input is most extreme. Measured:
+    _clip(8000 chars, limit=-304) returned 7696 characters.
+    """
+    if limit <= 0:
+        return ""
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…"
@@ -45,6 +56,9 @@ def _chunk_lines(lines: list[str], limit: int) -> list[str]:
     blocks: list[str] = []
     current = ""
     for line in lines:
+        # Clip first: a single line longer than the limit would otherwise be
+        # placed unchecked into an empty block and emitted oversized.
+        line = _clip(line, limit)
         candidate = f"{current}\n{line}" if current else line
         if current and len(candidate) > limit:
             blocks.append(current)
@@ -98,13 +112,23 @@ def panel_embed(state: PanelState) -> discord.Embed:
 
     embed = discord.Embed(title=title, description=" · ".join(bits),
                           colour=ACCENT)
+    # Discord counts the WHOLE embed against 6000 and reports nothing when it
+    # overflows. Per-field clips alone cannot hold that line: six events at
+    # FIELD_NAME_MAX + EMBED_FIELD_VALUE_MAX is already 7680. PAGE_SIZE lives in
+    # views.py, so rather than hardcode arithmetic that a change there would
+    # silently invalidate, share the remaining budget across however many events
+    # this page actually holds.
+    spare = EMBED_TOTAL_MAX - TOTAL_RESERVE - len(embed) - FOOTER_MAX
+    per_event = max(1, spare // max(1, len(state.events)))
+    name_max = min(FIELD_NAME_MAX, per_event // 2)
+    value_max = min(EMBED_FIELD_VALUE_MAX, per_event - name_max)
     for index, event in enumerate(state.events, start=1):
         star = "⭐ " if event.gt_id in state.saved_ids else ""
         cancelled = " — **CANCELLED**" if event.cancelled else ""
         embed.add_field(
-            name=_clip(f"{index}. {star}{event.title}", FIELD_NAME_MAX),
+            name=_clip(f"{index}. {star}{event.title}", name_max),
             value=_clip(f"{local_span(event, tz)} · {event.location}{cancelled}",
-                        EMBED_FIELD_VALUE_MAX),
+                        value_max),
             inline=False,
         )
 
@@ -112,7 +136,7 @@ def panel_embed(state: PanelState) -> discord.Embed:
         # Named, not counted: "6 drop-ins open now" tells you nothing you can
         # act on. Text only - all five action rows are already spent.
         names = " · ".join(e.title for e in state.drop_ins)
-        embed.set_footer(text=_clip(f"＋ Open now: {names}", 2048))
+        embed.set_footer(text=_clip(f"＋ Open now: {names}", FOOTER_MAX))
     return embed
 
 
@@ -174,9 +198,11 @@ def event_embed(show: Show, event: Event, threshold_minutes: int,
     tz = _tz(show)
     span = local_span(event, tz)
     marker = " · all-day drop-in" if event.is_drop_in(threshold_minutes) else ""
-    header = f"{event.day:%A} {span}{marker}\n{event.location}"
-    # Budget the description so header + body can never breach the total.
-    body = _clip(event.description, EMBED_DESCRIPTION_MAX - len(header) - 200)
+    # The location is clipped INTO the header: unbounded upstream text there
+    # would otherwise drive the description budget below zero.
+    header = f"{event.day:%A} {span}{marker}\n{_clip(event.location, 200)}"
+    body = _clip(event.description,
+                 max(0, EMBED_DESCRIPTION_MAX - len(header) - 200))
     embed = discord.Embed(
         title=_clip(("⭐ " if saved else "") + event.title, FIELD_NAME_MAX),
         description=f"{header}\n\n{body}",
