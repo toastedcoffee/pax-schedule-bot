@@ -28,10 +28,17 @@ def test_search_matches_mid_string(conn):
 
 
 def test_search_escapes_percent(conn):
-    """A bare % in user input must match a literal %, not everything."""
+    """A bare % in user input must match a literal %, not everything.
+
+    The control title must itself contain "100" but no literal "%". With a
+    control like "Something Else" this test is VACUOUS: the naive pattern
+    "%100%%" fails to match it anyway, so the assertion passes with or without
+    escaping. "1000 Blank White Cards" is matched by the naive pattern and
+    rejected by the escaped one, which is what makes the test discriminate.
+    """
     seed(conn, [
         make_event(gt_id="1", title="100% Orange Juice"),
-        make_event(gt_id="2", title="Something Else"),
+        make_event(gt_id="2", title="1000 Blank White Cards"),
     ])
     assert [e.gt_id for e in search_events(conn, "west", "100%")] == ["1"]
 
