@@ -13,41 +13,103 @@ Self-hosted. Your data stays on your machine.
 
 Phase 1: the data layer and a CLI. Discord commands are not implemented yet.
 
-## Requirements
+## Two ways to run it
 
-- Python 3.11+
+Docker is the deployment target — a container on a Linux host (e.g. a TrueNAS
+server) is the setup this project is built and tested against. A plain Python
+install also works and is useful for development, or if you'd rather not run
+Docker at all. Pick one.
 
-## Setup
+### Option A: Docker (recommended)
 
-    python -m pip install -e ".[dev]"
+Phase 1 has no long-running process — the CLI runs and exits — so the Compose
+service is invoked on demand rather than kept up. Phase 2's Discord bot will
+become a `restart: unless-stopped` service using the same image.
 
-## Usage
+**Build the image:**
 
-Invoke the CLI as a module (this also works without installing the package):
+    docker compose build
 
-    python -m paxbot sync                              # fetch the schedule
-    python -m paxbot list --day 2026-09-04             # list a day
-    python -m paxbot list --day 2026-09-04 --category Panels
+**Create the host data directory and hand it to the container's user.** The
+container runs as a fixed non-root uid/gid, 10001. Docker does not do this for
+you — a directory Compose auto-creates for a bind mount comes back owned by
+root, which uid 10001 cannot write to:
 
-`--category` must match the upstream category string exactly, including case
-("Panels" will not match "panels"). To see the real category names for a
-show, query the database directly after a sync. `python:3.13-slim` (the
-deployment container's base image) has no `sqlite3` CLI, and a TrueNAS
-operator may have no host Python either, so run the query through Python
-inside the container instead:
+    mkdir -p ./data
+    sudo chown 10001:10001 ./data
+
+**Run a sync:**
+
+    docker compose run --rm paxbot sync
+
+**List a day:**
+
+    docker compose run --rm paxbot list --day 2026-09-04 --category Panels
+
+The database lives at `/data/paxbot.db` inside the container (set via the
+`PAXBOT_DB` environment variable, which the CLI reads whenever `--db` is not
+given explicitly). `compose.yml` mounts `./data` on the host to `/data`. On
+TrueNAS, point the left-hand side of that volume at a dataset, e.g.
+`/mnt/tank/apps/paxbot/data:/data`, instead of a relative host path.
+
+`compose.yml` also mounts `./shows.toml` read-only to `/app/shows.toml` and
+sets `PAXBOT_CONFIG=/app/shows.toml`. Adding a convention, or editing dates or
+an API key, is therefore a host-side edit to `shows.toml` — **no image rebuild
+required.**
+
+To find real category names for `--category`, run the query through Python
+inside the container (`python:3.13-slim`, the base image, has no `sqlite3`
+CLI, and a TrueNAS operator may have no host Python either):
 
     docker compose run --rm --entrypoint python paxbot -c \
       "import sqlite3;print(*sorted({r[0] for r in sqlite3.connect('/data/paxbot.db').execute('SELECT DISTINCT category FROM event_categories')}),sep='\n')"
 
-Outside the container, with a local Python and the database at `paxbot.db`,
-the equivalent is:
+**Storage caveat:** the `/data` volume must be backed by a filesystem with
+proper POSIX locking. A local dataset is fine; an NFS or SMB share is not,
+because SQLite's WAL mode relies on locking guarantees those do not reliably
+provide, and a bind mount over such a share can corrupt the database or hang.
+
+The container publishes no ports — the bot only makes outbound connections to
+the PAX schedule API (and, in phase 2, to Discord).
+
+Scheduling a recurring sync is an external concern for now: add a cron entry
+or a TrueNAS scheduled task that runs `docker compose run --rm paxbot sync`
+on whatever cadence you want.
+
+### Option B: Standalone Python
+
+No Docker. Requires Python 3.11+.
+
+**Install:**
+
+    python -m pip install -e ".[dev]"
+
+**Run it as a module** — this is the invocation to use. A `paxbot` console
+script is declared, but an editable install does not reliably put it on your
+PATH; `python -m paxbot` always works regardless:
+
+    python -m paxbot sync                              # fetch the schedule
+    python -m paxbot list --day 2026-09-04              # list a day
+    python -m paxbot list --day 2026-09-04 --category Panels
+
+By default the database is `paxbot.db` in the current directory and the show
+config is the `shows.toml` shipped with the repo. To find real category names
+for `--category`:
 
     python -c "import sqlite3;print(*sorted({r[0] for r in sqlite3.connect('paxbot.db').execute('SELECT DISTINCT category FROM event_categories')}),sep='\n')"
 
-Config resolution follows the same override order as the database path:
-`--config` wins, then the `PAXBOT_CONFIG` environment variable, then
-`./shows.toml` in the current directory, then the copy shipped beside the
-installed package.
+### Config and database resolution (both options)
+
+Both the database path and the show config follow the same override order,
+whether you're in a container or running standalone:
+
+| | Flag | Environment variable | Default |
+|---|---|---|---|
+| Database | `--db` | `PAXBOT_DB` | `paxbot.db` in the current directory |
+| Config | `--config` | `PAXBOT_CONFIG` | `./shows.toml`, else the copy shipped with the package |
+
+`--category` must match the upstream category string exactly, including case
+("Panels" will not match "panels").
 
 ## Adding another PAX
 
@@ -62,6 +124,9 @@ Add a block to `shows.toml`:
     end_date   = 2027-04-25
 
 Recover the API key with `python scripts/find_api_key.py east`.
+
+Under Docker, editing `shows.toml` on the host is enough — the file is
+mounted, not baked into the image, so no rebuild is needed.
 
 ### Annual rollover
 
@@ -94,56 +159,6 @@ addressable under their own slug. See
 
     pytest              # fast, offline
     pytest -m live      # contract tests against the live API
-
-## Docker
-
-The deployment target is Docker on a Linux host (e.g. a TrueNAS server). Phase 1
-has no long-running process — the CLI runs and exits — so the Compose service is
-invoked on demand rather than kept up. Phase 2's Discord bot will become a
-`restart: unless-stopped` service using the same image.
-
-Build the image:
-
-    docker compose build
-
-The container runs as a fixed non-root user, uid/gid 10001. Before the first
-run, create the host data directory and hand it to that uid - Docker does
-not do this for you, and a directory Compose auto-creates for a bind mount
-comes back owned by root, which uid 10001 cannot write to:
-
-    mkdir -p ./data
-    sudo chown 10001:10001 ./data
-
-Run a sync:
-
-    docker compose run --rm paxbot sync
-
-List a day:
-
-    docker compose run --rm paxbot list --day 2026-09-04 --category Panels
-
-The database lives at `/data/paxbot.db` inside the container (set via the
-`PAXBOT_DB` environment variable, which the CLI reads whenever `--db` is not
-given explicitly). `compose.yml` mounts `./data` on the host to `/data`. On
-TrueNAS, point the left-hand side of that volume at a dataset, e.g.
-`/mnt/tank/apps/paxbot/data:/data`, instead of a relative host path.
-
-`compose.yml` also mounts `./shows.toml` read-only to `/app/shows.toml` and
-sets `PAXBOT_CONFIG=/app/shows.toml` (see "Usage" above for the full
-resolution order). Adding a convention, or editing dates or an API key, is
-therefore a host-side edit to `shows.toml` - no image rebuild required.
-
-**Storage caveat:** that volume must be backed by a filesystem with proper
-POSIX locking. A local dataset is fine; an NFS or SMB share is not, because
-SQLite's WAL mode relies on locking guarantees those do not reliably provide,
-and a bind mount over such a share can corrupt the database or hang.
-
-The container publishes no ports — the bot only makes outbound connections to
-the PAX schedule API (and, in phase 2, to Discord).
-
-Scheduling a recurring sync is an external concern for now: add a cron entry
-or a TrueNAS scheduled task that runs `docker compose run --rm paxbot sync`
-on whatever cadence you want.
 
 ## Contributing
 
