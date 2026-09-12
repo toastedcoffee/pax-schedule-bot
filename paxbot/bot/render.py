@@ -269,15 +269,20 @@ def search_results_text(events, tz: ZoneInfo) -> str:
     return _clip(text, MESSAGE_CONTENT_MAX)
 
 
-def conflict_text(event: Event, clashes, tz: ZoneInfo) -> str:
+def conflict_text(event: Event, clashes, tz: ZoneInfo, prefix: str = "") -> str:
     """The "Overlaps X" prompt, naming the specific event.
 
     Naming matters: with a median of three categories per event and heavy room
     reuse, "this conflicts with something" would be useless.
+
+    `prefix` is passed in rather than concatenated by the caller so that any
+    text prepended to this message stays inside `_clip`'s own budget instead
+    of being bolted on outside it, which could push the total over
+    MESSAGE_CONTENT_MAX.
     """
     first = clashes[0]
     more = f" (and {len(clashes) - 1} more)" if len(clashes) > 1 else ""
-    text = (f"**{_clip(event.title, 150)}** overlaps "
+    text = (f"{prefix}**{_clip(event.title, 150)}** overlaps "
             f"**{_clip(first.title, 150)}**, {local_span(first, tz)}, "
             f"{_clip(first.location, 100)}{more}.")
     return _clip(text, MESSAGE_CONTENT_MAX)

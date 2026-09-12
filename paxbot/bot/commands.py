@@ -82,11 +82,19 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         )
         await interaction.response.send_message(
             embed=panel.embed(), view=panel, ephemeral=True)
-        panel.message = await interaction.original_response()
+        try:
+            panel.message = await interaction.original_response()
+        except discord.HTTPException:
+            # The panel is already on screen; only on_timeout needs the handle.
+            # Without it the controls are never disabled at 14 minutes and the
+            # "expired" notice never appears - a silent degradation, so log it.
+            log.warning("could not capture panel message; timeout will be silent",
+                        exc_info=True)
 
     @tree.command(name="find", description="Find an event by name")
     @app_commands.describe(query="At least 2 characters", day="YYYY-MM-DD")
-    async def find(interaction: discord.Interaction, query: str,
+    async def find(interaction: discord.Interaction,
+                   query: app_commands.Range[str, 2, 100],
                    day: str | None = None):
         show = deps.resolve_show(interaction.guild_id)
         event = get_event(deps.conn, show.slug, query)
@@ -160,8 +168,17 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
 
 
 def _show_start(show: Show) -> datetime:
+    """Midnight on day one, in the show's timezone, converted to UTC.
+
+    The conversion is load-bearing. The store compares `starts_at` as TEXT, so
+    an ISO string carrying a -07:00 offset is byte-compared against one carrying
+    +00:00 and the comparison silently means nothing. Verified: an event at
+    2026-09-04T00:30:00+00:00 (17:30 local on the 3rd, before the show) sorts as
+    >= "2026-09-04T00:00:00-07:00" and would be wrongly offered as upcoming.
+    """
     return datetime(show.start_date.year, show.start_date.month,
-                    show.start_date.day, tzinfo=ZoneInfo(show.timezone))
+                    show.start_date.day,
+                    tzinfo=ZoneInfo(show.timezone)).astimezone(UTC)
 
 
 async def _find_freetext(interaction, deps, show, query, day):
@@ -198,7 +215,7 @@ async def _find_freetext(interaction, deps, show, query, day):
     hint = (f" {missed} earlier today — use `day:` to search the whole day."
             if missed else "")
     await interaction.response.send_message(
-        f"No upcoming matches for “{query}”.{hint}", ephemeral=True)
+        f"No upcoming matches for “{query[:100]}”.{hint}", ephemeral=True)
 
 
 class _FindResult(discord.ui.View):
@@ -224,10 +241,12 @@ class _FindResult(discord.ui.View):
         save_event(self.deps.conn, str(interaction.user.id), self.show.slug,
                    self.event.gt_id)
         if clashes:
+            # Prefix passed IN, so it is inside the helper's budget rather
+            # than bolted on outside its clip.
             await interaction.response.send_message(
-                "Added — but "
-                + render.conflict_text(self.event, clashes,
-                                       ZoneInfo(self.show.timezone)),
+                render.conflict_text(self.event, clashes,
+                                     ZoneInfo(self.show.timezone),
+                                     prefix="Added — but "),
                 ephemeral=True)
             return
         await interaction.response.send_message("Added.", ephemeral=True)
