@@ -9,7 +9,7 @@ import sqlite3
 from datetime import UTC, datetime
 
 from paxbot.models import Event
-from paxbot.store.events import _categories, _to_event
+from paxbot.store.events import categories_for, to_event
 
 
 def save_event(conn: sqlite3.Connection, user_id: str, show_slug: str,
@@ -61,7 +61,7 @@ def saved_events(conn: sqlite3.Connection, user_id: str,
         "ORDER BY e.starts_at, e.title, e.gt_id",
         (user_id, show_slug),
     ).fetchall()
-    return [_to_event(r, _categories(conn, show_slug, r["gt_id"])) for r in rows]
+    return [to_event(r, categories_for(conn, show_slug, r["gt_id"])) for r in rows]
 
 
 def missing_saved_ids(conn: sqlite3.Connection, user_id: str,

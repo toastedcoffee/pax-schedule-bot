@@ -20,7 +20,7 @@ from paxbot.bot.client import PaxClient
 from paxbot.bot.commands import BotDeps
 from paxbot.cli import _resolve_config, _resolve_db
 from paxbot.config import load_config
-from paxbot.store.db import connect
+from paxbot.store.db import SchemaVersionError, connect
 from paxbot.sync.runner import run_sync
 
 log = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ def build(argv=None) -> tuple[PaxClient, str, str]:
     try:
         conn = connect(db_path)
         conn.execute("PRAGMA user_version")
-    except sqlite3.Error as exc:
+    except (SchemaVersionError, sqlite3.Error) as exc:
         raise StartupError(f"cannot open database {db_path}: {exc}") from exc
 
     raw_guild = os.environ.get("PAXBOT_GUILD_ID", "").strip()

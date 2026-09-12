@@ -10,12 +10,14 @@ import sqlite3
 from datetime import date, datetime
 
 from paxbot.models import Event
-from paxbot.store.events import _categories, _to_event
+from paxbot.store.events import categories_for, to_event
 
 # LIKE treats % and _ as wildcards, so user input carrying either would match
 # far more than intended - a search for "100%" would otherwise return every
-# event. Backslash is escaped first, or escaping the others would double-escape
-# it. SQLite needs the escape character named explicitly via ESCAPE.
+# event. str.translate() makes a single pass over the mapping and never
+# rescans its own output, so there is no double-escaping hazard here (that
+# risk applies to chained .replace() calls, not one translate table). SQLite
+# still needs the escape character named explicitly via ESCAPE.
 _LIKE_ESCAPE = str.maketrans({"\\": "\\\\", "%": "\\%", "_": "\\_"})
 
 
@@ -24,7 +26,7 @@ def _like_pattern(query: str) -> str:
 
 
 def _rows_to_events(conn, show_slug: str, rows) -> list[Event]:
-    return [_to_event(r, _categories(conn, show_slug, r["gt_id"])) for r in rows]
+    return [to_event(r, categories_for(conn, show_slug, r["gt_id"])) for r in rows]
 
 
 def search_events(
@@ -95,8 +97,8 @@ def distinct_categories(
     """Category names with event counts, most frequent first.
 
     The panel's select can hold 24 of these plus an "All" option. Ordering by
-    count is what makes that truncation cover 97.7% of assignments rather than
-    an arbitrary alphabetical slice.
+    count is what makes that truncation cover the common cases rather than an
+    arbitrary alphabetical slice.
     """
     rows = conn.execute(
         "SELECT c.category, COUNT(*) AS n FROM event_categories c "

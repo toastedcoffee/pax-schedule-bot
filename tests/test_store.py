@@ -200,6 +200,28 @@ def test_a_pre_ordinal_database_is_migrated_not_just_stamped(tmp_path):
     conn.close()
 
 
+def test_a_v1_database_missing_ordinal_is_repaired_not_just_stamped(tmp_path):
+    """The v1->v2 bump made this reachable: a v1 database still falls through
+    to the ordinal repair, and gating that repair on `current < 1` skipped
+    exactly the databases that needed it."""
+    path = tmp_path / "v1.db"
+    raw = sqlite3.connect(str(path))
+    raw.executescript(PRE_ORDINAL_SCHEMA + "PRAGMA user_version = 1;")
+    raw.commit()
+    raw.close()
+
+    conn = connect(path)
+    try:
+        columns = {r["name"] for r in conn.execute(
+            "PRAGMA table_info(event_categories)")}
+        assert "ordinal" in columns
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        # The real symptom: category reads must work afterwards.
+        assert events_for_day(conn, "west", date(2026, 9, 4)) is not None
+    finally:
+        conn.close()
+
+
 def test_migrating_preserves_existing_rows(tmp_path):
     path = tmp_path / "old.db"
     legacy = sqlite3.connect(path)

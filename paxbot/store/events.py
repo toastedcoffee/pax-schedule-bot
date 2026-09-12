@@ -8,7 +8,7 @@ from typing import Iterable
 from paxbot.models import Event
 
 
-def _to_event(row: sqlite3.Row, categories: tuple[str, ...]) -> Event:
+def to_event(row: sqlite3.Row, categories: tuple[str, ...]) -> Event:
     return Event(
         show_slug=row["show_slug"],
         gt_id=row["gt_id"],
@@ -25,7 +25,7 @@ def _to_event(row: sqlite3.Row, categories: tuple[str, ...]) -> Event:
     )
 
 
-def _categories(conn, show_slug: str, gt_id: str) -> tuple[str, ...]:
+def categories_for(conn, show_slug: str, gt_id: str) -> tuple[str, ...]:
     rows = conn.execute(
         "SELECT category FROM event_categories "
         "WHERE show_slug = ? AND gt_id = ? ORDER BY ordinal",
@@ -106,7 +106,7 @@ def get_event(conn, show_slug: str, gt_id: str) -> Event | None:
     ).fetchone()
     if row is None:
         return None
-    return _to_event(row, _categories(conn, show_slug, gt_id))
+    return to_event(row, categories_for(conn, show_slug, gt_id))
 
 
 def events_for_day(
@@ -125,4 +125,4 @@ def events_for_day(
         params.append(category)
     sql += " ORDER BY e.starts_at, e.title, e.gt_id"
     rows = conn.execute(sql, params).fetchall()
-    return [_to_event(r, _categories(conn, show_slug, r["gt_id"])) for r in rows]
+    return [to_event(r, categories_for(conn, show_slug, r["gt_id"])) for r in rows]
