@@ -3,6 +3,13 @@ services:
     build: .
     image: paxbot:latest
     user: "10001:10001"
+    command: ["bot"]
+    restart: unless-stopped
+    # The LEAP fetch has a 30s read timeout. Docker's default grace period is
+    # 10s, so a `docker stop` landing mid-sync would be SIGKILLed - WAL keeps
+    # the database intact, but that sync's update would be lost.
+    stop_grace_period: 30s
+    env_file: .env
     environment:
       PAXBOT_DB: /data/paxbot.db
       PAXBOT_CONFIG: /app/shows.toml

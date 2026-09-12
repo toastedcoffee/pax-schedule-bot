@@ -66,11 +66,19 @@ def _build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--db", default=None)
     listing.add_argument("--config", default=None)
 
+    sub.add_parser("bot", help="run the Discord bot (needs DISCORD_TOKEN)")
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+
+    if args.command == "bot":
+        # Imported lazily so `paxbot sync` keeps working even if discord.py is
+        # missing or broken - the data layer must not depend on the bot layer.
+        from paxbot.app import run as run_bot
+        return run_bot(argv)
 
     config_path = _resolve_config(args.config)
     try:
