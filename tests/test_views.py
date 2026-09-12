@@ -284,3 +284,35 @@ def test_saved_view_does_not_flag_conflicts_against_cancelled_events(conn):
     state = saved_view(conn, SHOW, USER, THRESHOLD)
     assert [e.gt_id for e in state.days[0].events] == ["dead", "live"]
     assert state.days[0].conflict_ids == frozenset()
+
+
+def test_saved_view_flags_all_pairs_not_just_adjacent_ones(conn):
+    """Hub-and-spokes: two events that each overlap a third but not each other.
+
+    Sorted by start time the pairs are (hub, spoke1), (hub, spoke2),
+    (spoke1, spoke2). An adjacent-only comparison would catch the first,
+    miss the second, and leave spoke2 unflagged - a silently missed conflict.
+    """
+    seed(conn, [
+        make_event(gt_id="hub", hour=17, minutes=180),              # 10:00-13:00
+        make_event(gt_id="spoke1", hour=17, minute=30, minutes=30),  # 10:30-11:00
+        make_event(gt_id="spoke2", hour=19, minutes=30),             # 12:00-12:30
+    ])
+    for gt in ("hub", "spoke1", "spoke2"):
+        save_event(conn, USER, "west", gt)
+    state = saved_view(conn, SHOW, USER, THRESHOLD)
+    assert state.days[0].conflict_ids == frozenset({"hub", "spoke1", "spoke2"})
+
+
+def test_find_conflicts_returns_earliest_first(conn):
+    """The caller names clashes[0] and counts the rest, so order is load-bearing."""
+    seed(conn, [
+        make_event(gt_id="late", hour=18, minutes=60),               # 11:00-12:00
+        make_event(gt_id="early", hour=17, minutes=120),             # 10:00-12:00
+        make_event(gt_id="new", hour=17, minute=45, minutes=30),     # 10:45-11:15
+    ])
+    save_event(conn, USER, "west", "late")
+    save_event(conn, USER, "west", "early")
+    from paxbot.store.events import get_event
+    got = find_conflicts(conn, SHOW, USER, get_event(conn, "west", "new"), THRESHOLD)
+    assert [e.gt_id for e in got] == ["early", "late"]
