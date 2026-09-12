@@ -76,7 +76,11 @@ def test_hour_options_come_from_the_day_and_fit(conn):
     seed(conn, [make_event(gt_id=str(h), hour=h) for h in range(17, 24)])
     options = render.hour_options(state_for(conn))
     assert len(options) <= render.SELECT_OPTION_MAX
-    assert all(o.value.isdigit() for o in options)
+    # "All day" is the only non-numeric option and it MUST be present: without
+    # it a user who picks an hour can never return to the whole-day view except
+    # via Reset, which also clears their day and category.
+    assert options[0].value == render.ALL_VALUE
+    assert all(o.value.isdigit() for o in options[1:])
 
 
 def test_category_options_never_exceed_the_select_limit(conn):
@@ -130,3 +134,29 @@ def test_saved_embed_reports_removed_events(conn):
 def test_saved_embed_is_helpful_when_empty(conn):
     embed = render.saved_embed(saved_view(conn, SHOW, USER, THRESHOLD), THRESHOLD)
     assert "/schedule" in str(embed.to_dict())
+
+
+def test_saved_embed_does_not_silently_drop_a_long_day(conn):
+    """A keen attendee saves 16+ things on one day. One embed field caps at
+    1024 characters, which truncated the list with only an ellipsis to show for
+    it - hiding events from the one view whose whole job is showing them."""
+    seed(conn, [make_event(gt_id=str(i), hour=17, minute=i % 60,
+                           title=f"Event number {i} with a reasonably long name")
+                for i in range(30)])
+    for i in range(30):
+        save_event(conn, USER, "west", str(i))
+    embed = render.saved_embed(saved_view(conn, SHOW, USER, THRESHOLD), THRESHOLD)
+    rendered = "\n".join(f.value for f in embed.fields)
+    assert rendered.count("Event number") == 30
+    assert len(embed) <= render.EMBED_TOTAL_MAX
+
+
+def test_saved_embed_says_how_many_did_not_fit(conn):
+    """Past what even chunking can hold, name the shortfall instead of eliding."""
+    seed(conn, [make_event(gt_id=str(i), hour=17, minute=i % 60,
+                           title=f"E{i} " + "x" * 90) for i in range(120)])
+    for i in range(120):
+        save_event(conn, USER, "west", str(i))
+    embed = render.saved_embed(saved_view(conn, SHOW, USER, THRESHOLD), THRESHOLD)
+    assert len(embed) <= render.EMBED_TOTAL_MAX
+    assert "did not fit" in str(embed.to_dict())

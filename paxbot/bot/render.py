@@ -15,6 +15,10 @@ from paxbot.models import Event
 from paxbot.views import PanelState, SavedState
 
 EMBED_TOTAL_MAX = 6000
+# Headroom kept free so the "Not shown" and "Removed upstream" notices always
+# fit, plus two reserved field slots for the same reason.
+TOTAL_RESERVE = 400
+MAX_SCHEDULE_FIELDS = 23
 EMBED_DESCRIPTION_MAX = 4096
 EMBED_FIELD_VALUE_MAX = 1024
 SELECT_OPTION_MAX = 25
@@ -31,6 +35,25 @@ def _clip(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…"
+
+
+def _chunk_lines(lines: list[str], limit: int) -> list[str]:
+    """Pack lines into blocks of at most `limit` characters, never splitting one.
+
+    One line is one event, so splitting mid-line would render half an event.
+    """
+    blocks: list[str] = []
+    current = ""
+    for line in lines:
+        candidate = f"{current}\n{line}" if current else line
+        if current and len(candidate) > limit:
+            blocks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        blocks.append(current)
+    return blocks
 
 
 def _clock(moment) -> str:
@@ -126,8 +149,9 @@ def hour_options(state: PanelState) -> list[discord.SelectOption]:
     hours = set(state.hours)
     if state.filters.hour is not None:
         hours.add(state.filters.hour)
-    options = [discord.SelectOption(label=_hour_label(hour), value=str(hour))
-               for hour in sorted(hours)]
+    options = [discord.SelectOption(label="All day", value=ALL_VALUE)]
+    options += [discord.SelectOption(label=_hour_label(hour), value=str(hour))
+                for hour in sorted(hours)]
     return options[:SELECT_OPTION_MAX]
 
 
@@ -181,6 +205,7 @@ def saved_embed(state: SavedState, threshold_minutes: int) -> discord.Embed:
         description=f"**{state.total}** saved",
         colour=ACCENT,
     )
+    blocks: list[tuple[str, str]] = []
     for saved_day in state.days:
         lines = []
         for event in saved_day.events:
@@ -193,11 +218,33 @@ def saved_embed(state: SavedState, threshold_minutes: int) -> discord.Embed:
             dead = " — **CANCELLED**" if event.cancelled else ""
             lines.append(
                 f"{local_span(event, tz)} · {event.title}{drop}{flag}{dead}")
+        # Chunk rather than clip. A single field caps at 1024 characters, which
+        # silently swallowed events past roughly the fifteenth on a busy day -
+        # in the one view whose whole job is showing someone their schedule.
+        for index, block in enumerate(_chunk_lines(lines, EMBED_FIELD_VALUE_MAX)):
+            suffix = "" if index == 0 else " (continued)"
+            blocks.append((f"{saved_day.day:%A, %B %d}{suffix}", block))
+
+    used = len(embed)
+    hidden = 0
+    for name, value in blocks:
+        over = used + len(name) + len(value) > EMBED_TOTAL_MAX - TOTAL_RESERVE
+        if over or len(embed.fields) >= MAX_SCHEDULE_FIELDS:
+            hidden += value.count("\n") + 1
+            continue
+        embed.add_field(name=name, value=value, inline=False)
+        used += len(name) + len(value)
+
+    if hidden:
+        # Say so rather than ending on a bare ellipsis. Narrowing to one day
+        # frees the budget the other days were consuming.
         embed.add_field(
-            name=f"{saved_day.day:%A, %B %d}",
-            value=_clip("\n".join(lines), EMBED_FIELD_VALUE_MAX),
+            name="Not shown",
+            value=f"{hidden} more saved event(s) did not fit. "
+                  "Use `/me day:YYYY-MM-DD` to narrow to one day.",
             inline=False,
         )
+
     if state.missing:
         embed.add_field(
             name="Removed upstream",

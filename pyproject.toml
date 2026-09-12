@@ -19,6 +19,9 @@ paxbot = "paxbot.cli:main"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+include = ["paxbot*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["live: hits the real LEAP API (deselected by default)"]
