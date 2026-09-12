@@ -83,9 +83,10 @@ def test_is_running_outside_the_show():
 
 
 def test_is_running_converts_to_show_timezone():
-    """9 Sep 04 07:00 UTC is 8 Sep 04 00:00 Pacific - still before the show.
+    """2026-09-04 06:00 UTC is 2026-09-03 23:00 Pacific - still before the show.
 
-    Comparing the UTC date directly would wrongly report the show as running.
+    Pacific is UTC-7 in September. Comparing the UTC date directly would read
+    this as the 4th and wrongly report the show as running.
     """
     assert WEST.is_running(datetime(2026, 9, 4, 6, 0, tzinfo=UTC_TZ)) is False
     assert WEST.is_running(datetime(2026, 9, 4, 8, 0, tzinfo=UTC_TZ)) is True
