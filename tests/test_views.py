@@ -88,7 +88,19 @@ def test_pagination_splits_and_reports_page_count(conn):
     assert len(first.events) == PAGE_SIZE
     assert first.page_count == 3
     last = panel_view(conn, SHOW, filters(page=2), USER, THRESHOLD, now)
-    assert len(last.events) == 2
+    assert len(last.events) == 14 - 2 * PAGE_SIZE
+
+
+def test_page_size_fits_one_discord_action_row():
+    """One star button per event, all sharing a single action row - and Discord
+    caps a row at 5 buttons.
+
+    Asserted on the constant because the panel that would break lives in
+    paxbot/bot/panel.py, which has no unit tests by design. Without this, a
+    well-meaning bump to PAGE_SIZE would surface only as a runtime
+    "item would not fit at row 4" the first time a full page rendered.
+    """
+    assert PAGE_SIZE <= 5
 
 
 def test_out_of_range_page_is_clamped(conn):

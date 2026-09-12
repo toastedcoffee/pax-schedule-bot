@@ -21,7 +21,13 @@ from paxbot.store.events import events_for_day
 from paxbot.store.queries import distinct_categories
 from paxbot.store.saved import missing_saved_ids, saved_events, saved_gt_ids
 
-PAGE_SIZE = 6
+# FIVE, not six. Every event on a page gets a star button and they all share one
+# action row, which Discord caps at 5 buttons - discord.ui.View raises
+# "item would not fit at row 4 (6 > 5 width)" on a full page. Raising this
+# number makes the panel impossible to construct at all. Measured cost of 5 vs
+# 6: the worst single hour on the real PAX West 2026 schedule holds 40 events,
+# which is 8 pages instead of 7.
+PAGE_SIZE = 5
 # Discord caps a select at 25 options; one slot is spent on "All categories".
 MAX_CATEGORY_OPTIONS = 24
 
