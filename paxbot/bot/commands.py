@@ -15,7 +15,7 @@ import discord
 from discord import app_commands
 
 from paxbot.bot import render
-from paxbot.bot.panel import SchedulePanel
+from paxbot.bot.panel import SchedulePanel, _apologise
 from paxbot.config import Config, Show
 from paxbot.store.events import get_event
 from paxbot.store.queries import count_matches_before, search_events, upcoming_events
@@ -68,7 +68,7 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
                                         hour=None, category=category)
             except ValueError:
                 await interaction.response.send_message(
-                    f"`{day}` is not a date in YYYY-MM-DD form.", ephemeral=True)
+                    f"`{day[:32]}` is not a date in YYYY-MM-DD form.", ephemeral=True)
                 return
         elif category:
             filters = type(filters)(day=filters.day, hour=filters.hour,
@@ -105,6 +105,18 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
 
     @find.autocomplete("query")
     async def find_autocomplete(interaction: discord.Interaction, current: str):
+        try:
+            return _autocomplete_choices(deps, interaction, current)
+        except Exception:
+            # An autocomplete that raises shows an empty menu with no
+            # explanation and Discord surfaces nothing. Degrade to no
+            # suggestions, but leave a trace.
+            log.exception("autocomplete failed")
+            return []
+
+    def _autocomplete_choices(
+        deps: BotDeps, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice]:
         show = deps.resolve_show(interaction.guild_id)
         tz = ZoneInfo(show.timezone)
         now = deps.now()
@@ -137,7 +149,7 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
                 only = date.fromisoformat(day)
             except ValueError:
                 await interaction.response.send_message(
-                    f"`{day}` is not a date in YYYY-MM-DD form.", ephemeral=True)
+                    f"`{day[:32]}` is not a date in YYYY-MM-DD form.", ephemeral=True)
                 return
         state = saved_view(deps.conn, show, str(interaction.user.id),
                            deps.config.drop_in_threshold_minutes, day=only)
@@ -161,7 +173,7 @@ async def _find_freetext(interaction, deps, show, query, day):
             only = date.fromisoformat(day)
         except ValueError:
             await interaction.response.send_message(
-                f"`{day}` is not a date in YYYY-MM-DD form.", ephemeral=True)
+                f"`{day[:32]}` is not a date in YYYY-MM-DD form.", ephemeral=True)
             return
     if len(query) < MIN_SEARCH_CHARS:
         await interaction.response.send_message(
@@ -171,11 +183,12 @@ async def _find_freetext(interaction, deps, show, query, day):
     results = search_events(deps.conn, show.slug, query, 10, day=only,
                             after=now if (running and only is None) else None)
     if results:
-        tz = ZoneInfo(show.timezone)
-        lines = "\n".join(
-            f"• {render.local_span(e, tz)} · {e.title}" for e in results)
+        # Budgeted in render.py: ten unbounded titles can exceed Discord's
+        # 2000-character content cap, which it rejects outright rather than
+        # truncating.
         await interaction.response.send_message(
-            f"**{len(results)} match(es)**\n{lines}", ephemeral=True)
+            render.search_results_text(results, ZoneInfo(show.timezone)),
+            ephemeral=True)
         return
 
     # The one bad outcome of filtering forward by default is an event you know
@@ -211,10 +224,19 @@ class _FindResult(discord.ui.View):
         save_event(self.deps.conn, str(interaction.user.id), self.show.slug,
                    self.event.gt_id)
         if clashes:
-            tz = ZoneInfo(self.show.timezone)
-            first = clashes[0]
             await interaction.response.send_message(
-                f"Added — but it overlaps **{first.title}**, "
-                f"{render.local_span(first, tz)}.", ephemeral=True)
+                "Added — but "
+                + render.conflict_text(self.event, clashes,
+                                       ZoneInfo(self.show.timezone)),
+                ephemeral=True)
             return
         await interaction.response.send_message("Added.", ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction,
+                       error: Exception, item) -> None:
+        """The save may already have committed before the failure, so say so
+        rather than letting Discord claim the whole action failed."""
+        log.exception("find-result interaction failed", exc_info=error)
+        await _apologise(
+            interaction,
+            "Something went wrong finishing that. Check `/me` - it may have saved.")
