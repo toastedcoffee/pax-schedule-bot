@@ -134,10 +134,22 @@ whether you're in a container or running standalone:
 
 ### Bot environment variables
 
-`paxbot bot` has no flags — everything comes from the environment, which
-under Docker means `.env` (see `.env.example`; `compose.yml` loads it via
-`env_file`). `PAXBOT_DB` and `PAXBOT_CONFIG` above apply here too — both run
-paths resolve the database and config the same way.
+`paxbot bot` has no flags — everything comes from the environment.
+`PAXBOT_DB` and `PAXBOT_CONFIG` above apply here too; both run paths resolve
+the database and config the same way.
+
+**Under Docker**, that environment comes from `.env` (see `.env.example`),
+which `compose.yml` loads via `env_file`.
+
+**Running standalone, `.env` is not read** — there is no `python-dotenv`
+dependency, so set the variables in your shell:
+
+    # PowerShell
+    $env:DISCORD_TOKEN = "..."
+    $env:PAXBOT_GUILD_ID = "..."
+
+    # bash
+    export DISCORD_TOKEN=... PAXBOT_GUILD_ID=...
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|

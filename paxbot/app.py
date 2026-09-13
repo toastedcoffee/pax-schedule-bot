@@ -66,8 +66,11 @@ def build(argv=None) -> tuple[PaxClient, str, str]:
     token = os.environ.get("DISCORD_TOKEN", "").strip()
     if not token:
         raise StartupError(
-            "DISCORD_TOKEN is not set. Put it in .env (see .env.example); "
-            "Compose loads it via env_file.")
+            "DISCORD_TOKEN is not set.\n"
+            "  Docker:     put it in .env (see .env.example); compose reads it "
+            "via env_file.\n"
+            "  Standalone: export it in your shell. .env is NOT read outside "
+            "Docker - there is no python-dotenv dependency.")
 
     config_path = _resolve_config(None)
     try:
