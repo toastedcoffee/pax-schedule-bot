@@ -124,6 +124,16 @@ def test_events_for_day_filters_by_category(conn):
     assert [e.gt_id for e in got] == ["2"]
 
 
+def test_events_for_day_category_filter_is_case_insensitive(conn):
+    """A user typing "tabletop" for the stored "Tabletop" should match - a
+    plain SQLite `=` on TEXT is case-sensitive and silently returns nothing."""
+    with transaction(conn):
+        upsert_events(conn, [make_event("1", categories=("Tabletop",))])
+    for query in ("tabletop", "TABLETOP", "TaBlEtOp"):
+        got = events_for_day(conn, "west", date(2026, 9, 4), category=query)
+        assert [e.gt_id for e in got] == ["1"], f"category={query!r} did not match"
+
+
 def test_nested_transaction_is_refused(conn):
     """Nesting would let an inner block commit work the outer means to undo."""
     with pytest.raises(TransactionError):

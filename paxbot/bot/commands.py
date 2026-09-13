@@ -18,7 +18,12 @@ from paxbot.bot import render
 from paxbot.bot.panel import ConfirmSave, SchedulePanel, _apologise
 from paxbot.config import Config, Show
 from paxbot.store.events import get_event
-from paxbot.store.queries import count_matches_before, search_events, upcoming_events
+from paxbot.store.queries import (
+    count_matches_before,
+    distinct_categories,
+    search_events,
+    upcoming_events,
+)
 from paxbot.store.saved import save_event, saved_gt_ids, unsave_event
 from paxbot.views import default_filters, find_conflicts, saved_view
 
@@ -90,6 +95,31 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
             # "expired" notice never appears - a silent degradation, so log it.
             log.warning("could not capture panel message; timeout will be silent",
                         exc_info=True)
+
+    @schedule.autocomplete("category")
+    async def schedule_category_autocomplete(interaction: discord.Interaction,
+                                             current: str):
+        try:
+            return _category_choices(deps, interaction, current)
+        except Exception:
+            log.exception("schedule category autocomplete failed")
+            return []
+
+    def _category_choices(deps: BotDeps, interaction: discord.Interaction,
+                          current: str) -> list[app_commands.Choice]:
+        # Unlike the panel's own select - capped at the top 24 by count, per
+        # views.MAX_CATEGORY_OPTIONS - this reaches all 37: it is a plain text
+        # argument, not a component with a 25-option ceiling, so a substring
+        # match can surface any tail category the select cannot.
+        show = deps.resolve_show(interaction.guild_id)
+        cats = distinct_categories(deps.conn, show.slug)
+        if current:
+            needle = current.casefold()
+            cats = [c for c in cats if needle in c[0].casefold()]
+        return [
+            app_commands.Choice(name=f"{name} ({count})", value=name)
+            for name, count in cats[:AUTOCOMPLETE_LIMIT]
+        ]
 
     @tree.command(name="find", description="Find an event by name")
     @app_commands.describe(query="At least 2 characters", day="YYYY-MM-DD")

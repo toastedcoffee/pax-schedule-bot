@@ -118,9 +118,13 @@ def events_for_day(
     )
     params: list[object] = [show_slug, day.isoformat()]
     if category:
+        # NOCASE: a user typing "tabletop" for the stored "Tabletop" should
+        # match, not silently return nothing. Safe here because every upstream
+        # category name is ASCII - NOCASE only folds ASCII case.
         sql += (
             " AND EXISTS (SELECT 1 FROM event_categories c "
-            "WHERE c.show_slug = e.show_slug AND c.gt_id = e.gt_id AND c.category = ?)"
+            "WHERE c.show_slug = e.show_slug AND c.gt_id = e.gt_id "
+            "AND c.category = ? COLLATE NOCASE)"
         )
         params.append(category)
     sql += " ORDER BY e.starts_at, e.title, e.gt_id"
