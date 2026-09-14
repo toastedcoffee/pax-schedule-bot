@@ -3,7 +3,10 @@ FROM python:3.13-slim
 # Show-local times need the IANA database, which slim images do not ship.
 # It arrives via the tzdata pip dependency, so no apt layer is needed.
 
-RUN useradd --create-home --uid 10001 paxbot
+# 568:568 is TrueNAS SCALE's built-in `apps` user, so a dataset given the
+# "Apps" permission preset is writable with no manual chown. compose.yml can
+# override it per host with PAXBOT_UID / PAXBOT_GID.
+RUN groupadd --gid 568 paxbot && useradd --create-home --uid 568 --gid 568 paxbot
 
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./

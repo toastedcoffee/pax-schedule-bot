@@ -39,12 +39,17 @@ same image for one-off use; see "Run a one-off command" below.
     docker compose build
 
 **Create the host data directory and hand it to the container's user.** The
-container runs as a fixed non-root uid/gid, 10001. Docker does not do this for
-you — a directory Compose auto-creates for a bind mount comes back owned by
-root, which uid 10001 cannot write to:
+container runs as non-root uid/gid 568, which is TrueNAS SCALE's built-in
+`apps` user. On TrueNAS, create a dataset for the data and apply the **Apps**
+permission preset; nothing else is needed. Elsewhere, Docker does not do this
+for you — a directory Compose auto-creates for a bind mount comes back owned
+by root, which uid 568 cannot write to:
 
     mkdir -p ./data
-    sudo chown 10001:10001 ./data
+    sudo chown 568:568 ./data
+
+To run as a different host user, set `PAXBOT_UID` and `PAXBOT_GID` in `.env`
+and `chown` the directory to match.
 
 **Create your `.env`:**
 
@@ -157,6 +162,7 @@ dependency, so set the variables in your shell:
 | `PAXBOT_SHOW` | no | `west` | Which `shows.toml` block the bot serves |
 | `PAXBOT_GUILD_ID` | no | none (registers globally) | Registers slash commands to one server instantly instead of waiting up to an hour for a global rollout |
 | `PAXBOT_LOG_LEVEL` | no | `INFO` | Python logging level |
+| `PAXBOT_UID` / `PAXBOT_GID` | no | `568` | Docker only: the uid/gid the container runs as (TrueNAS SCALE's `apps` user). Must own the data directory |
 
 ## Adding another PAX
 
