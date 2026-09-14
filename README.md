@@ -102,8 +102,8 @@ To find real category names for `--category`, run the query through Python
 inside the container (`python:3.13-slim`, the base image, has no `sqlite3`
 CLI, and a TrueNAS operator may have no host Python either):
 
-    docker compose run --rm --entrypoint python paxbot -c       "import sqlite3;print(*sorted({r[0] for r in sqlite3.connect('/data/paxbot.db').execute('SELECT DISTINCT category FROM event_categories')}),sep='
-')"
+    docker compose run --rm --entrypoint python paxbot -c \
+      "import sqlite3;print(*sorted({r[0] for r in sqlite3.connect('/data/paxbot.db').execute('SELECT DISTINCT category FROM event_categories')}),sep='\n')"
 
 **Storage caveat:** the `/data` volume must be backed by a filesystem with
 proper POSIX locking. A local dataset is fine; an NFS or SMB share is not,
