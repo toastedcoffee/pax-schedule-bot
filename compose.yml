@@ -1,9 +1,15 @@
+# Runs the published image, so it works pasted into a stack manager (Dockge,
+# Portainer) with no copy of the repo. To build from source instead, see
+# compose.build.yml.
+#
+# Settings come from variables: a .env file next to this one (Dockge writes
+# one), your stack manager's environment variables (Portainer), or the shell.
+# See .env.example.
 services:
   paxbot:
-    build: .
-    image: paxbot:latest
-    # TrueNAS SCALE's `apps` user by default. Set PAXBOT_UID / PAXBOT_GID in
-    # .env to run as a different host user instead.
+    image: ghcr.io/toastedcoffee/pax-schedule-bot:${PAXBOT_TAG:-latest}
+    # TrueNAS SCALE's `apps` user by default. Set PAXBOT_UID / PAXBOT_GID to
+    # run as a different host user instead.
     user: "${PAXBOT_UID:-568}:${PAXBOT_GID:-568}"
     command: ["bot"]
     restart: unless-stopped
@@ -11,15 +17,19 @@ services:
     # 10s, so a `docker stop` landing mid-sync would be SIGKILLed - WAL keeps
     # the database intact, but that sync's update would be lost.
     stop_grace_period: 30s
-    env_file: .env
     environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+      PAXBOT_GUILD_ID: ${PAXBOT_GUILD_ID:-}
+      PAXBOT_SHOW: ${PAXBOT_SHOW:-west}
+      PAXBOT_LOG_LEVEL: ${PAXBOT_LOG_LEVEL:-INFO}
       PAXBOT_DB: /data/paxbot.db
       PAXBOT_CONFIG: /app/shows.toml
     volumes:
-      # On TrueNAS point this at a dataset, e.g. /mnt/tank/apps/paxbot/data,
-      # and give it the "Apps" permission preset. Elsewhere it must be
-      # writable by the container's uid:
+      # On TrueNAS set PAXBOT_DATA_DIR to a dataset, e.g.
+      # /mnt/tank/apps/paxbot/data, and give it the "Apps" permission preset.
+      # Elsewhere the directory must be writable by the container's uid:
       #   mkdir -p ./data && sudo chown 568:568 ./data
-      - ./data:/data
-      # Mounted so a new PAX convention needs no image rebuild.
-      - ./shows.toml:/app/shows.toml:ro
+      - ${PAXBOT_DATA_DIR:-./data}:/data
+      # The image ships shows.toml. To use your own (a new convention, changed
+      # dates) without waiting for a new image, mount it over the built-in one:
+      # - /mnt/tank/apps/paxbot/shows.toml:/app/shows.toml:ro
