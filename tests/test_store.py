@@ -124,6 +124,16 @@ def test_events_for_day_filters_by_category(conn):
     assert [e.gt_id for e in got] == ["2"]
 
 
+def test_events_for_day_category_filter_is_case_insensitive(conn):
+    """A user typing "tabletop" for the stored "Tabletop" should match - a
+    plain SQLite `=` on TEXT is case-sensitive and silently returns nothing."""
+    with transaction(conn):
+        upsert_events(conn, [make_event("1", categories=("Tabletop",))])
+    for query in ("tabletop", "TABLETOP", "TaBlEtOp"):
+        got = events_for_day(conn, "west", date(2026, 9, 4), category=query)
+        assert [e.gt_id for e in got] == ["1"], f"category={query!r} did not match"
+
+
 def test_nested_transaction_is_refused(conn):
     """Nesting would let an inner block commit work the outer means to undo."""
     with pytest.raises(TransactionError):
@@ -190,10 +200,36 @@ def test_a_pre_ordinal_database_is_migrated_not_just_stamped(tmp_path):
     conn = connect(path)
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(event_categories)")}
     assert "ordinal" in columns
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    # Was hardcoded `== 1`; that stamped-version literal predates schema v2
+    # and this line, uniquely in this file, never referenced the SCHEMA_VERSION
+    # symbol its sibling assertion above (line 149) already uses. The test's
+    # intent - "stamped to the current version" - is unchanged.
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     # and the pre-existing data is still queryable
     assert [e.gt_id for e in events_for_day(conn, "west", date(2026, 9, 4))] == ["1"]
     conn.close()
+
+
+def test_a_v1_database_missing_ordinal_is_repaired_not_just_stamped(tmp_path):
+    """The v1->v2 bump made this reachable: a v1 database still falls through
+    to the ordinal repair, and gating that repair on `current < 1` skipped
+    exactly the databases that needed it."""
+    path = tmp_path / "v1.db"
+    raw = sqlite3.connect(str(path))
+    raw.executescript(PRE_ORDINAL_SCHEMA + "PRAGMA user_version = 1;")
+    raw.commit()
+    raw.close()
+
+    conn = connect(path)
+    try:
+        columns = {r["name"] for r in conn.execute(
+            "PRAGMA table_info(event_categories)")}
+        assert "ordinal" in columns
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        # The real symptom: category reads must work afterwards.
+        assert events_for_day(conn, "west", date(2026, 9, 4)) is not None
+    finally:
+        conn.close()
 
 
 def test_migrating_preserves_existing_rows(tmp_path):

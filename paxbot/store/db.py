@@ -7,7 +7,7 @@ from pathlib import Path
 
 from paxbot.store.schema import SCHEMA
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class TransactionError(Exception):
@@ -50,7 +50,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
             f"{SCHEMA_VERSION} - upgrade paxbot or use a different database"
         )
 
-    if current < 1 and "ordinal" not in _column_names(conn, "event_categories"):
+    # v1 -> v2 added the `saved` table. New TABLES need no migration step:
+    # connect() runs CREATE TABLE IF NOT EXISTS before this function, so the
+    # table already exists by the time we get here. Only new COLUMNS on
+    # existing tables (like v1's `ordinal`, below) need explicit ALTERs.
+    #
+    # No version clause: the column check IS the condition. Gating this on
+    # `current < 1` excluded exactly the databases needing repair once
+    # SCHEMA_VERSION moved to 2, because a v1 database no longer returns early.
+    if "ordinal" not in _column_names(conn, "event_categories"):
         # Databases written before category ordering was preserved.
         conn.execute(
             "ALTER TABLE event_categories "

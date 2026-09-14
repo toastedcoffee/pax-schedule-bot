@@ -48,6 +48,12 @@ class Event:
     categories: tuple[str, ...]
     row_hash: str
 
+    # Defaulted so every existing constructor keeps working. Deliberately NOT
+    # part of compute_row_hash: cancellation is our inference from an event
+    # vanishing upstream, not a field the payload actually carries, and hashing
+    # it would make a cancellation look like an upstream content change.
+    cancelled: bool = False
+
     @property
     def duration_minutes(self) -> int:
         return int((self.ends_at - self.starts_at).total_seconds() // 60)

@@ -7,7 +7,7 @@ license = { text = "AGPL-3.0-or-later" }
 # tzdata is required on Windows, which ships no system timezone database:
 # without it zoneinfo.ZoneInfo("America/Los_Angeles") raises
 # ZoneInfoNotFoundError. Harmless (and unused) on Linux and macOS.
-dependencies = ["httpx>=0.27", "tzdata>=2024.1"]
+dependencies = ["httpx>=0.27", "tzdata>=2024.1", "discord.py>=2.4"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
@@ -18,6 +18,9 @@ paxbot = "paxbot.cli:main"
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["paxbot*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
