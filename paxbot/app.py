@@ -49,14 +49,20 @@ def _database_hint(db_path: str) -> str:
     folder = os.path.dirname(os.path.abspath(db_path))
     if not os.path.isdir(folder):
         return f"\n  {folder} does not exist."
-    if os.access(folder, os.W_OK):
+    # SQLite also writes -wal and -shm files beside the database, so every one
+    # that already exists must be writable too.
+    stuck = [path for path in (db_path, f"{db_path}-wal", f"{db_path}-shm")
+             if os.path.exists(path) and not os.access(path, os.W_OK)]
+    if os.access(folder, os.W_OK) and not stuck:
         return ""
     uid = os.getuid() if hasattr(os, "getuid") else None
     who = f"uid {uid}" if uid is not None else "this user"
+    unwritable = folder if not os.access(folder, os.W_OK) else ", ".join(stuck)
     return (
-        f"\n  {folder} is not writable by {who}, which the bot runs as."
+        f"\n  {unwritable} is not writable by {who}, which the bot runs as."
         "\n  Docker creates a missing bind-mount folder owned by root. On the "
-        "host, chown it\n  to the container's user (568:568 by default).")
+        "host, chown -R the\n  data folder to the container's user (568:568 by "
+        "default).")
 
 
 def _sync_once(db_path: str, show) -> None:

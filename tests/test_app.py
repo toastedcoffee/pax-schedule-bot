@@ -30,3 +30,17 @@ def test_an_unwritable_data_folder_says_who_needs_write_access(tmp_path, monkeyp
 
 def test_a_writable_data_folder_adds_no_hint(tmp_path):
     assert app._database_hint(str(tmp_path / "paxbot.db")) == ""
+
+
+def test_an_unwritable_database_file_in_a_writable_folder_is_named(tmp_path, monkeypatch):
+    """chown without -R fixes the folder but leaves an old owner's files."""
+    db = tmp_path / "paxbot.db"
+    db.touch()
+    real_access = os.access
+    monkeypatch.setattr(app.os, "access", lambda path, mode: (
+        False if mode == os.W_OK and os.fspath(path) == str(db)
+        else real_access(path, mode)))
+    hint = app._database_hint(str(db))
+    assert str(db) in hint
+    assert "not writable" in hint
+    assert "-R" in hint
