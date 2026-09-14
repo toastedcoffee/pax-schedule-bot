@@ -38,6 +38,27 @@ class StartupError(Exception):
     """The bot cannot start. Raised before connecting to Discord."""
 
 
+def _database_hint(db_path: str) -> str:
+    """Name the folder problem behind a database that will not open.
+
+    SQLite reports a missing or unwritable folder only as "unable to open
+    database file". Under Docker the usual cause is a bind-mount folder the
+    daemon created itself: it runs as root, so the folder is root-owned no
+    matter which user the container runs as.
+    """
+    folder = os.path.dirname(os.path.abspath(db_path))
+    if not os.path.isdir(folder):
+        return f"\n  {folder} does not exist."
+    if os.access(folder, os.W_OK):
+        return ""
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    who = f"uid {uid}" if uid is not None else "this user"
+    return (
+        f"\n  {folder} is not writable by {who}, which the bot runs as."
+        "\n  Docker creates a missing bind-mount folder owned by root. On the "
+        "host, chown it\n  to the container's user (568:568 by default).")
+
+
 def _sync_once(db_path: str, show) -> None:
     """Run one sync on its OWN connection.
 
@@ -90,7 +111,8 @@ def build(argv=None) -> tuple[PaxClient, str, str]:
         conn = connect(db_path)
         conn.execute("PRAGMA user_version")
     except (SchemaVersionError, sqlite3.Error) as exc:
-        raise StartupError(f"cannot open database {db_path}: {exc}") from exc
+        raise StartupError(f"cannot open database {db_path}: {exc}"
+                           f"{_database_hint(db_path)}") from exc
 
     raw_guild = os.environ.get("PAXBOT_GUILD_ID", "").strip()
     try:
