@@ -158,12 +158,17 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
             return
         saved = saved_gt_ids(deps.conn, str(interaction.user.id), show.slug)
         is_saved = event.gt_id in saved
+        card = _FindResult(deps, show, event, saved=is_saved)
         await interaction.response.send_message(
             embed=render.event_embed(show, event,
                                      deps.config.drop_in_threshold_minutes,
                                      saved=is_saved),
-            view=_FindResult(deps, show, event, saved=is_saved),
-            ephemeral=True)
+            view=card, ephemeral=True)
+        try:
+            card.message = await interaction.original_response()
+        except discord.HTTPException:
+            log.warning("could not capture find card; timeout will be silent",
+                        exc_info=True)
 
     find.autocomplete("day")(day_autocomplete)
 
@@ -289,6 +294,7 @@ class _FindResult(discord.ui.View):
         self.deps = deps
         self.show = show
         self.event = event
+        self.message: discord.Message | None = None
 
         from paxbot.bot import ids
         if saved:
@@ -336,6 +342,25 @@ class _FindResult(discord.ui.View):
         unsave_event(self.deps.conn, str(interaction.user.id), self.show.slug,
                     self.event.gt_id)
         await interaction.response.send_message("Removed.", ephemeral=True)
+
+    async def on_timeout(self) -> None:
+        """Disable the button and say so, as the panel and the confirm prompt
+        do. Otherwise it still looks usable and a click gets a bare "This
+        interaction failed" with nothing saved.
+
+        Best effort: the message edits through the /find command's token,
+        which a click answered with a new message can outlive. Then the edit
+        fails and is logged, which is no worse than before.
+        """
+        for child in self.children:
+            child.disabled = True
+        if self.message is None:
+            return
+        try:
+            await self.message.edit(
+                content="This card expired — run `/find` again.", view=self)
+        except discord.HTTPException:
+            log.debug("find card timeout edit failed", exc_info=True)
 
     async def on_error(self, interaction: discord.Interaction,
                        error: Exception, item) -> None:

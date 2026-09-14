@@ -260,13 +260,12 @@ def event_embed(show: Show, event: Event, threshold_minutes: int,
 
 
 def search_results_text(events, tz: ZoneInfo) -> str:
-    """Plain message content for a modal search result.
+    """Plain message content for /find's typed-and-submitted search results.
 
-    Lives here rather than in panel.py so it is covered by this project's
-    testing decision: panel.py has no unit tests, and an unbudgeted message is
-    exactly the kind of silent Discord rejection this module exists to prevent.
-    Titles are unbounded upstream, so ten of them can exceed the 2000-character
-    cap however small the result limit is.
+    Budgeted here because an unbudgeted message is exactly the kind of silent
+    Discord rejection this module exists to prevent. Titles are unbounded
+    upstream, so ten of them can exceed the 2000-character cap however small
+    the result limit is.
     """
     header = f"**{len(events)} match(es)**\n"
     budget = MESSAGE_CONTENT_MAX - len(header) - 40

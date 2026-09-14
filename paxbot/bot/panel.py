@@ -391,6 +391,15 @@ class SearchModal(discord.ui.Modal, title="Search the schedule"):
         self.query.default = panel.filters.query
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        if self.panel.is_finished():
+            # The modal can outlive the panel. Re-rendering now would replace
+            # the expiry notice with controls discord.py never registers - it
+            # stores only views that are not finished - so every click on
+            # them would fail.
+            await interaction.response.send_message(
+                "This panel expired. Run `/schedule` to open a new one.",
+                ephemeral=True)
+            return
         text = str(self.query).strip()
         if len(text) < 2:
             # min_length counts whitespace, so "   " gets this far.

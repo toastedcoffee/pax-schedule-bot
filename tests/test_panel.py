@@ -310,3 +310,48 @@ def test_a_blank_search_is_refused_without_touching_the_panel(conn):
         assert panel.filters.query is None
 
     asyncio.run(run())
+
+
+def test_a_search_submitted_after_the_panel_expired_does_not_revive_it(conn):
+    """A modal can stay open past the panel's timeout. Re-rendering then would
+    replace the expiry notice with live-looking controls discord.py never
+    registers, because it only stores views that are not finished."""
+    _seed_three_pages(conn)
+
+    async def run():
+        holder = []
+        panel = _panel(conn, holder)
+        modal, click = _submit_search(panel, holder[0], "panel")
+        panel.stop()                      # what the timeout does
+        await modal.on_submit(click)
+        assert not click.response.edits, "expired panel was re-rendered"
+        assert click.response.sent
+        args, _ = click.response.sent[0]
+        assert "expired" in args[0]
+
+    asyncio.run(run())
+
+
+def test_a_find_card_disables_its_button_and_says_so_on_timeout(conn):
+    """Without this the button still looks usable after expiry, and a click
+    gets a bare "This interaction failed" with nothing saved."""
+    from paxbot.bot.commands import BotDeps, _FindResult
+    from paxbot.config import Config
+    with transaction(conn):
+        upsert_events(conn, [make_event(gt_id="1")])
+    from paxbot.store.events import get_event
+
+    async def run():
+        deps = BotDeps(conn=conn, config=Config(shows={"west": SHOW}, drop_in_threshold_minutes=THRESHOLD), show=SHOW)
+        card = _FindResult(deps, SHOW, get_event(conn, "west", "1"), saved=False)
+        edits = []
+
+        async def edit(**kwargs):
+            edits.append(kwargs)
+
+        card.message = types.SimpleNamespace(edit=edit)
+        await card.on_timeout()
+        assert all(child.disabled for child in card.children)
+        assert edits and "expired" in edits[-1]["content"]
+
+    asyncio.run(run())
