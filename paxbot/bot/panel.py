@@ -365,7 +365,7 @@ class ConfirmSave(discord.ui.View):
         log.exception("confirm-save interaction failed", exc_info=error)
         await _apologise(
             interaction,
-            "Something went wrong finishing that. Check `/me` - it may have saved.")
+            "Something went wrong finishing that. Check `/myschedule` - it may have saved.")
 
 
 class SearchModal(discord.ui.Modal, title="Search the schedule"):

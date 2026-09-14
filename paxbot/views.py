@@ -220,7 +220,7 @@ def saved_view(
     threshold_minutes: int,
     day: date | None = None,
 ) -> SavedState:
-    """The /me schedule, grouped by day with conflicts flagged in place."""
+    """The /myschedule view, grouped by day with conflicts flagged in place."""
     events = saved_events(conn, user_id, show.slug)
     if day is not None:
         events = [e for e in events if e.day == day]
@@ -236,7 +236,7 @@ def saved_view(
         # anything - the slot they occupied is free.
         blocking = [e for e in same_day
                     if not e.is_drop_in(threshold_minutes) and not e.cancelled]
-        # Both sides of a clashing pair are flagged, so /me marks the two
+        # Both sides of a clashing pair are flagged, so /myschedule marks the two
         # events that overlap rather than only the later one.
         clashing: set[str] = set()
         for i, first in enumerate(blocking):

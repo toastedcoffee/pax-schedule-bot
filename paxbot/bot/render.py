@@ -338,7 +338,7 @@ def saved_embed(state: SavedState, threshold_minutes: int) -> discord.Embed:
         embed.add_field(
             name="Not shown",
             value=f"{hidden} more saved event(s) did not fit. "
-                  "Use `/me day:YYYY-MM-DD` to narrow to one day.",
+                  "Use `/myschedule day:` to narrow to one day.",
             inline=False,
         )
 

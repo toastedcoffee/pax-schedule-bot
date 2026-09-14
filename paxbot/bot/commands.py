@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import discord
@@ -16,7 +16,7 @@ from discord import app_commands
 
 from paxbot.bot import render
 from paxbot.bot.panel import ConfirmSave, SchedulePanel, _apologise
-from paxbot.config import Config, Show
+from paxbot.config import Config, DayError, Show
 from paxbot.store.events import get_event
 from paxbot.store.queries import (
     count_matches_before,
@@ -58,10 +58,36 @@ class BotDeps:
         return self.show
 
 
+DAY_HELP = "A show day: Saturday, Sat, or 2026-09-05"
+
+
 def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
 
+    async def day_autocomplete(interaction: discord.Interaction, current: str):
+        """Shared by every command that takes a day: the show's own dates,
+        labelled by weekday and narrowed by whatever has been typed so far.
+
+        The choice value is the ISO date, so a picked day always resolves; a
+        typed-and-submitted one goes through Show.resolve_day instead.
+        """
+        try:
+            show = deps.resolve_show(interaction.guild_id)
+            needle = current.strip().casefold()
+            choices = []
+            for day in show.days():
+                label = f"{day:%A, %b %d}"
+                if needle in label.casefold() or needle in day.isoformat():
+                    choices.append(app_commands.Choice(name=label,
+                                                       value=day.isoformat()))
+            return choices[:AUTOCOMPLETE_LIMIT]
+        except Exception:
+            # An autocomplete that raises shows an empty menu with no
+            # explanation. Degrade to no suggestions, but leave a trace.
+            log.exception("day autocomplete failed")
+            return []
+
     @tree.command(name="schedule", description="Browse the schedule and build your own")
-    @app_commands.describe(day="YYYY-MM-DD", category="Filter to one category")
+    @app_commands.describe(day=DAY_HELP, category="Filter to one category")
     async def schedule(interaction: discord.Interaction,
                        day: str | None = None,
                        category: str | None = None):
@@ -69,11 +95,10 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         filters = default_filters(deps.conn, show, deps.now())
         if day:
             try:
-                filters = type(filters)(day=date.fromisoformat(day),
+                filters = type(filters)(day=show.resolve_day(day),
                                         hour=None, category=category)
-            except ValueError:
-                await interaction.response.send_message(
-                    f"`{day[:32]}` is not a date in YYYY-MM-DD form.", ephemeral=True)
+            except DayError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
                 return
         elif category:
             filters = type(filters)(day=filters.day, hour=filters.hour,
@@ -91,6 +116,8 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         # anchor. The panel replaces it with each click it answers in place;
         # this token alone would die 15 minutes after /schedule.
         panel.anchor = interaction
+
+    schedule.autocomplete("day")(day_autocomplete)
 
     @schedule.autocomplete("category")
     async def schedule_category_autocomplete(interaction: discord.Interaction,
@@ -118,7 +145,7 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         ]
 
     @tree.command(name="find", description="Find an event by name")
-    @app_commands.describe(query="At least 2 characters", day="YYYY-MM-DD")
+    @app_commands.describe(query="At least 2 characters", day=DAY_HELP)
     async def find(interaction: discord.Interaction,
                    query: app_commands.Range[str, 2, 100],
                    day: str | None = None):
@@ -137,6 +164,8 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
                                      saved=is_saved),
             view=_FindResult(deps, show, event, saved=is_saved),
             ephemeral=True)
+
+    find.autocomplete("day")(day_autocomplete)
 
     @find.autocomplete("query")
     async def find_autocomplete(interaction: discord.Interaction, current: str):
@@ -174,17 +203,18 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
             for e in events
         ]
 
-    @tree.command(name="me", description="Your saved schedule")
-    @app_commands.describe(day="YYYY-MM-DD")
-    async def me(interaction: discord.Interaction, day: str | None = None):
+    # Not /me: Discord lists its own built-in /me action command in the same
+    # picker, so typing /me quickly selects whichever entry is highlighted.
+    @tree.command(name="myschedule", description="Your saved schedule")
+    @app_commands.describe(day=DAY_HELP)
+    async def myschedule(interaction: discord.Interaction, day: str | None = None):
         show = deps.resolve_show(interaction.guild_id)
         only = None
         if day:
             try:
-                only = date.fromisoformat(day)
-            except ValueError:
-                await interaction.response.send_message(
-                    f"`{day[:32]}` is not a date in YYYY-MM-DD form.", ephemeral=True)
+                only = show.resolve_day(day)
+            except DayError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
                 return
         state = saved_view(deps.conn, show, str(interaction.user.id),
                            deps.config.drop_in_threshold_minutes, day=only)
@@ -192,6 +222,8 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
             embed=render.saved_embed(state,
                                      deps.config.drop_in_threshold_minutes),
             ephemeral=True)
+
+    myschedule.autocomplete("day")(day_autocomplete)
 
 
 def _show_start(show: Show) -> datetime:
@@ -214,10 +246,9 @@ async def _find_freetext(interaction, deps, show, query, day):
     only = None
     if day:
         try:
-            only = date.fromisoformat(day)
-        except ValueError:
-            await interaction.response.send_message(
-                f"`{day[:32]}` is not a date in YYYY-MM-DD form.", ephemeral=True)
+            only = show.resolve_day(day)
+        except DayError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
             return
     if len(query) < MIN_SEARCH_CHARS:
         await interaction.response.send_message(
@@ -313,4 +344,4 @@ class _FindResult(discord.ui.View):
         log.exception("find-result interaction failed", exc_info=error)
         await _apologise(
             interaction,
-            "Something went wrong finishing that. Check `/me` - it may have saved.")
+            "Something went wrong finishing that. Check `/myschedule` - it may have saved.")

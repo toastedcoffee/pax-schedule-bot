@@ -12,7 +12,7 @@ Self-hosted. Your data stays on your machine.
 ## Status
 
 The data layer, sync job, CLI and Discord bot are all built and working. The
-bot serves three slash commands — `/schedule`, `/find` and `/me` — and syncs
+bot serves three slash commands — `/schedule`, `/find` and `/myschedule` — and syncs
 itself on a loop once it is running, so nothing external needs to trigger a
 sync anymore. The CLI's `sync` and `list` subcommands are still there too,
 mainly for checking the store directly without going through Discord.
