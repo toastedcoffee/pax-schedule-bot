@@ -10,6 +10,11 @@ failed after rebuild() had already detached the old buttons, leaving
 discord.py's ViewStore pointing at detached items, so every later click was
 discarded with "View interaction referencing unknown view".
 
+The Search tests at the bottom were added under the same exception, for the
+owner's smoke-test report that Search posted a separate reply and never touched
+the panel. They pin the same invariants: Search answers by editing the panel in
+place, becomes its anchor, and leaves the store attached.
+
 The invariants pinned here are this project's own - out-of-band panel edits go
 through the newest click's token, and a failed edit never leaves the store
 referencing detached items. The only fakes are the interaction methods the
@@ -24,15 +29,17 @@ import discord
 import pytest
 from discord.ui.view import ViewStore
 
-from paxbot.bot.panel import ConfirmSave, SchedulePanel
+from paxbot.bot import ids
+from paxbot.bot.panel import ConfirmSave, SchedulePanel, SearchModal
 from paxbot.store.db import transaction
 from paxbot.store.events import upsert_events
 from paxbot.store.saved import save_event
 from paxbot.views import PanelFilters
 from tests.conftest import make_event
-from tests.test_views import FRI, SHOW, THRESHOLD, USER
+from tests.test_views import FRI, SAT, SHOW, THRESHOLD, USER
 
 MESSAGE_ID = 1
+RESET_ID = ids.encode(ids.RESET)
 # Before the show, so the panel renders no "Now" button.
 NOW = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 
@@ -231,5 +238,75 @@ def test_a_conflicting_star_answers_in_place_and_prompts_in_a_followup(conn):
         _, kwargs = click.followup.sent[0]
         assert isinstance(kwargs["view"], ConfirmSave)
         assert kwargs.get("ephemeral") is True
+
+    asyncio.run(run())
+
+
+
+def _submit_search(panel, store, text):
+    modal = SearchModal(panel)
+    modal.query._value = text
+    return modal, _Click(store)
+
+
+def test_search_filters_the_panel_in_place(conn):
+    """Owner smoke test, 2026-09-13: Search posted a separate text list with no
+    star buttons and left the panel untouched."""
+    with transaction(conn):
+        upsert_events(conn, [
+            make_event(gt_id="sat", title="Jackbox Party", day=SAT),
+            make_event(gt_id="other", title="Omegathon"),
+        ])
+
+    async def run():
+        holder = []
+        panel = _panel(conn, holder)
+        modal, click = _submit_search(panel, holder[0], "jackbox")
+        await modal.on_submit(click)
+        assert click.response.edits, "search did not edit the panel"
+        assert not click.response.sent, "search posted a separate message"
+        assert [e.gt_id for e in panel.state.events] == ["sat"]
+        # The submit's response IS the panel, so it is the newest anchor.
+        assert panel.anchor is click
+        _assert_store_attached(holder[0], panel)
+
+    asyncio.run(run())
+
+
+def test_other_filters_keep_the_search_and_reset_clears_it(conn):
+    with transaction(conn):
+        upsert_events(conn, [make_event(gt_id="sat", title="Jackbox Party", day=SAT)])
+
+    async def run():
+        holder = []
+        panel = _panel(conn, holder)
+        modal, click = _submit_search(panel, holder[0], "jackbox")
+        await modal.on_submit(click)
+
+        pick = _Click(holder[0])
+        pick.data["values"] = ["Panels"]
+        await panel._on_category(pick)
+        assert panel.filters.query == "jackbox"
+        assert panel.filters.day is None
+
+        await panel._on_nav(_Click(holder[0], custom_id=RESET_ID))
+        assert panel.filters.query is None
+        assert panel.filters.day == SHOW.start_date
+
+    asyncio.run(run())
+
+
+def test_a_blank_search_is_refused_without_touching_the_panel(conn):
+    """min_length counts spaces, so a query of only spaces reaches on_submit."""
+    _seed_three_pages(conn)
+
+    async def run():
+        holder = []
+        panel = _panel(conn, holder)
+        modal, click = _submit_search(panel, holder[0], "   ")
+        await modal.on_submit(click)
+        assert not click.response.edits
+        assert click.response.sent
+        assert panel.filters.query is None
 
     asyncio.run(run())

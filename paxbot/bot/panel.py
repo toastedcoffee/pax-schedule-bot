@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from dataclasses import replace
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -18,7 +19,6 @@ import discord
 from paxbot.bot import ids, render
 from paxbot.config import Show
 from paxbot.store.events import get_event
-from paxbot.store.queries import search_events
 from paxbot.store.saved import save_event, unsave_event
 from paxbot.views import PanelFilters, default_filters, find_conflicts, panel_view
 
@@ -162,14 +162,19 @@ class SchedulePanel(discord.ui.View):
         self._add_stars()
 
     def _add_selects(self) -> None:
+        searching = self.filters.query is not None
         day = discord.ui.Select(custom_id=ids.encode(ids.SEL_DAY),
                                 placeholder="Day", row=0,
-                                options=render.day_options(self.show))
+                                options=render.day_options(self.show, searching))
         day.callback = self._on_day
         self.add_item(day)
 
+        # A search across every day has no hours to offer; pick a day first.
+        all_days = self.filters.day is None
         hour = discord.ui.Select(custom_id=ids.encode(ids.SEL_HOUR),
-                                 placeholder="Running at", row=1,
+                                 placeholder=("Pick a day to filter by hour"
+                                              if all_days else "Running at"),
+                                 row=1, disabled=all_days,
                                  options=render.hour_options(self.state))
         hour.callback = self._on_hour
         self.add_item(hour)
@@ -217,24 +222,25 @@ class SchedulePanel(discord.ui.View):
     # ---- callbacks -------------------------------------------------------
     # Each callback hands its new filters to refresh() rather than assigning
     # self.filters first, so a failed edit can roll them back with the rest.
+    # replace() rather than a fresh PanelFilters, so an active search survives
+    # every select; only Reset and Now leave it.
     async def _on_day(self, interaction: discord.Interaction) -> None:
-        chosen = date.fromisoformat(interaction.data["values"][0])
-        await self.refresh(interaction, PanelFilters(
-            day=chosen, hour=None, category=self.filters.category, page=0))
+        raw = interaction.data["values"][0]
+        # "All days" is only offered while searching.
+        chosen = None if raw == render.ALL_VALUE else date.fromisoformat(raw)
+        await self.refresh(interaction, replace(
+            self.filters, day=chosen, hour=None, page=0))
 
     async def _on_hour(self, interaction: discord.Interaction) -> None:
         raw = interaction.data["values"][0]
         hour = None if raw == render.ALL_VALUE else int(raw)
-        await self.refresh(interaction, PanelFilters(
-            day=self.filters.day, hour=hour,
-            category=self.filters.category, page=0))
+        await self.refresh(interaction, replace(self.filters, hour=hour, page=0))
 
     async def _on_category(self, interaction: discord.Interaction) -> None:
         raw = interaction.data["values"][0]
         category = None if raw == render.ALL_VALUE else raw
-        await self.refresh(interaction, PanelFilters(
-            day=self.filters.day, hour=self.filters.hour,
-            category=category, page=0))
+        await self.refresh(interaction, replace(
+            self.filters, category=category, page=0))
 
     async def _on_nav(self, interaction: discord.Interaction) -> None:
         kind, _ = ids.decode(interaction.data["custom_id"])
@@ -288,8 +294,7 @@ class SchedulePanel(discord.ui.View):
 
 
 def _with_page(filters: PanelFilters, page: int) -> PanelFilters:
-    return PanelFilters(day=filters.day, hour=filters.hour,
-                        category=filters.category, page=max(0, page))
+    return replace(filters, page=max(0, page))
 
 
 class ConfirmSave(discord.ui.View):
@@ -369,26 +374,34 @@ class ConfirmSave(discord.ui.View):
 
 
 class SearchModal(discord.ui.Modal, title="Search the schedule"):
-    """Free text, so it has no 25-option cap - the escape hatch for the 13
-    categories that do not fit the select."""
+    """Filters the panel itself, across every day, by title or category name.
 
-    query = discord.ui.TextInput(label="Title contains", min_length=2,
+    Free text, so it has no 25-option cap - the escape hatch for the 13
+    categories that do not fit the select. Results land in the panel rather
+    than a separate message so they get star buttons and paging.
+    """
+
+    query = discord.ui.TextInput(label="Title or category contains", min_length=2,
                                  max_length=100, required=True)
 
     def __init__(self, panel: SchedulePanel):
         super().__init__()
         self.panel = panel
+        # Pre-filled, so refining a search is an edit rather than a retype.
+        self.query.default = panel.filters.query
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        results = search_events(self.panel.conn, self.panel.show.slug,
-                                str(self.query), limit=10)
-        if not results:
+        text = str(self.query).strip()
+        if len(text) < 2:
+            # min_length counts whitespace, so "   " gets this far.
             await interaction.response.send_message(
-                f"No events match “{self.query}”.", ephemeral=True)
+                "Type at least 2 characters to search.", ephemeral=True)
             return
-        tz = ZoneInfo(self.panel.show.timezone)
-        await interaction.response.send_message(
-            render.search_results_text(results, tz), ephemeral=True)
+        # A new search starts from the whole show: a stale day or category
+        # would silently hide what was asked for. The submit came from the
+        # panel's own button, so Discord lets it edit the panel in place - and
+        # refresh() makes it the anchor, like any other in-place answer.
+        await self.panel.refresh(interaction, PanelFilters(day=None, query=text))
 
     async def on_error(self, interaction: discord.Interaction,
                        error: Exception) -> None:

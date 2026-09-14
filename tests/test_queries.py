@@ -5,6 +5,7 @@ from paxbot.store.events import upsert_events
 from paxbot.store.queries import (
     count_matches_before,
     distinct_categories,
+    match_events,
     search_events,
     upcoming_events,
 )
@@ -128,3 +129,57 @@ def test_count_matches_before_powers_the_earlier_hint(conn):
     ])
     before = datetime(2026, 9, 4, 15, 0, tzinfo=UTC)
     assert count_matches_before(conn, "west", "Board", before) == 2
+
+
+# ---- match_events: the panel's Search, titles AND category names ----------
+
+def test_match_finds_an_event_by_category_name_alone(conn):
+    """Search is the escape hatch for the categories the select cannot fit, so
+    a category name must find events whose titles never mention it."""
+    seed(conn, [
+        make_event(gt_id="1", title="Crokinole Open", categories=("Tabletop Tournaments",)),
+        make_event(gt_id="2", title="Something Else", categories=("Panels",)),
+    ])
+    assert [e.gt_id for e in match_events(conn, "west", "tournament")] == ["1"]
+
+
+def test_match_returns_an_event_once_when_title_and_category_both_match(conn):
+    seed(conn, [make_event(gt_id="1", title="Tabletop Social",
+                           categories=("Tabletop", "Tabletop Freeplay"))])
+    assert [e.gt_id for e in match_events(conn, "west", "tabletop")] == ["1"]
+
+
+def test_match_escapes_wildcards_in_the_category_clause_too(conn):
+    """An underscore must not act as a one-character wildcard on categories."""
+    seed(conn, [make_event(gt_id="1", title="Plain", categories=("AxB",))])
+    assert match_events(conn, "west", "A_B") == []
+
+
+def test_match_is_not_capped_at_discords_choice_limit(conn):
+    """The panel pages its own results; truncating at 25 would hide events."""
+    seed(conn, [make_event(gt_id=str(i), title=f"Panel {i}", hour=10, minute=i)
+                for i in range(40)])
+    assert len(match_events(conn, "west", "Panel")) == 40
+
+
+def test_match_narrows_by_day_and_exact_category(conn):
+    seed(conn, [
+        make_event(gt_id="fri", title="Jackbox", day=date(2026, 9, 4)),
+        make_event(gt_id="sat", title="Jackbox", day=date(2026, 9, 5)),
+        make_event(gt_id="sat-other", title="Jackbox", day=date(2026, 9, 5),
+                   categories=("Tabletop",)),
+    ])
+    got = match_events(conn, "west", "jackbox", day=date(2026, 9, 5), category="panels")
+    assert [e.gt_id for e in got] == ["sat"]
+
+
+def test_match_excludes_cancelled_and_other_shows(conn):
+    from paxbot.store.events import mark_cancelled
+    seed(conn, [
+        make_event(gt_id="1", title="Jackbox"),
+        make_event(gt_id="2", title="Jackbox Gone"),
+        make_event(gt_id="3", title="Jackbox", show_slug="unplugged"),
+    ])
+    with transaction(conn):
+        mark_cancelled(conn, "west", ["2"])
+    assert [e.gt_id for e in match_events(conn, "west", "jackbox")] == ["1"]

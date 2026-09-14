@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from paxbot.config import Show
 from paxbot.models import Event
 from paxbot.store.events import events_for_day
-from paxbot.store.queries import distinct_categories
+from paxbot.store.queries import distinct_categories, match_events
 from paxbot.store.saved import missing_saved_ids, saved_events, saved_gt_ids
 
 # FIVE, not six. Every event on a page gets a star button and they all share one
@@ -34,10 +34,17 @@ MAX_CATEGORY_OPTIONS = 24
 
 @dataclass(frozen=True)
 class PanelFilters:
-    day: date
+    day: date | None              # None = every day; only valid in a search
     hour: int | None = None       # None = the whole day
     category: str | None = None   # None = all categories
     page: int = 0
+    query: str | None = None      # the Search button's text; None = browsing
+
+    def __post_init__(self) -> None:
+        # A browse view across all 713 events would be unusable, so all-days
+        # exists only inside a search.
+        if self.day is None and self.query is None:
+            raise ValueError("a panel without a day must be a search")
 
 
 @dataclass(frozen=True)
@@ -113,22 +120,41 @@ def panel_view(
     a day is at most ~206 rows.
     """
     tz = ZoneInfo(show.timezone)
-    day_events = events_for_day(conn, show.slug, filters.day,
-                                category=filters.category)
+    searching = filters.query is not None
+    if searching:
+        candidates = match_events(conn, show.slug, filters.query,
+                                  day=filters.day, category=filters.category)
+    else:
+        candidates = events_for_day(conn, show.slug, filters.day,
+                                    category=filters.category)
 
-    # Hour options are computed from the WHOLE day, not the category-filtered
-    # subset, so a sibling filter never shrinks them under the user. This is the
-    # same rule `categories` already follows below - it draws from the whole
-    # show rather than narrowing by the selected day or hour.
-    unfiltered = (day_events if filters.category is None
-                  else events_for_day(conn, show.slug, filters.day))
-    hours = _spanned_hours(unfiltered, filters.day, tz)
+    # Hour options are computed from the WHOLE day, not the filtered subset, so
+    # a sibling filter never shrinks them under the user. This is the same rule
+    # `categories` already follows below - it draws from the whole show rather
+    # than narrowing by the selected day or hour. A search with no day has no
+    # hours to offer: "running at 2pm" is meaningless across four days.
+    if filters.day is None:
+        hours: tuple[int, ...] = ()
+    else:
+        unfiltered = (candidates if filters.category is None and not searching
+                      else events_for_day(conn, show.slug, filters.day))
+        hours = _spanned_hours(unfiltered, filters.day, tz)
 
-    start, end = _window(show, filters.day, filters.hour)
-    in_window = [e for e in day_events if _overlaps(e, start, end)]
+    if filters.day is None:
+        in_window = candidates
+    else:
+        start, end = _window(show, filters.day, filters.hour)
+        in_window = [e for e in candidates if _overlaps(e, start, end)]
 
-    drop_ins = tuple(e for e in in_window if e.is_drop_in(threshold_minutes))
-    paged = [e for e in in_window if not e.is_drop_in(threshold_minutes)]
+    if searching:
+        # The footer collapse exists because drop-ins crowd a time window. A
+        # search names them explicitly, and a footer entry has no star button,
+        # so collapsing would make a searched-for drop-in unstarrable here.
+        drop_ins: tuple[Event, ...] = ()
+        paged = list(in_window)
+    else:
+        drop_ins = tuple(e for e in in_window if e.is_drop_in(threshold_minutes))
+        paged = [e for e in in_window if not e.is_drop_in(threshold_minutes)]
 
     total = len(paged)
     page_count = max(1, -(-total // PAGE_SIZE))   # ceiling division

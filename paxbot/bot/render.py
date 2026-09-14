@@ -94,22 +94,34 @@ def _tz(show: Show) -> ZoneInfo:
 
 def panel_embed(state: PanelState) -> discord.Embed:
     tz = _tz(state.show)
-    title = f"{state.show.name} — {state.filters.day:%A, %B %d}"
+    query = state.filters.query
+    if query is None:
+        title = f"{state.show.name} — {state.filters.day:%A, %B %d}"
+    else:
+        # The query is capped at 100 characters by the modal, but the show name
+        # is config, so clip the whole title rather than trust either.
+        title = _clip(f"{state.show.name} — search “{query}”", FIELD_NAME_MAX)
 
     if state.total == 0 and not state.drop_ins:
         # Distinguish "nothing matches your filters" from "nothing is loaded":
         # a user who has never synced should be told that, not told Saturday
         # is empty.
-        body = ("No schedule loaded yet — run a sync first."
-                if _store_looks_empty(state)
-                else "Nothing matches these filters.")
+        if _store_looks_empty(state):
+            body = "No schedule loaded yet — run a sync first."
+        elif query is not None:
+            body = f"No events match “{query}” with these filters. ↺ Reset clears the search."
+        else:
+            body = "Nothing matches these filters."
         return discord.Embed(title=title, description=body, colour=ACCENT)
 
     bits = []
+    if query is not None:
+        # The title carries the query, so name the day here instead.
+        bits.append(f"**{state.filters.day:%A}**" if state.filters.day
+                    else "**All days**")
     if state.filters.hour is not None:
-        hour = state.filters.hour
-        bits.append(f"Running at **{_hour_label(hour)}**")
-    else:
+        bits.append(f"Running at **{_hour_label(state.filters.hour)}**")
+    elif query is None:
         bits.append("**All day**")
     bits.append(state.filters.category or "all categories")
     bits.append(f"**{state.total}** events")
@@ -133,10 +145,11 @@ def panel_embed(state: PanelState) -> discord.Embed:
     for index, event in enumerate(state.events, start=1):
         star = "⭐ " if event.gt_id in state.saved_ids else ""
         cancelled = " — **CANCELLED**" if event.cancelled else ""
+        # Results spanning days need the day, or a bare time does not say when.
+        when = (f"{event.day:%a} " if state.filters.day is None else "")             + local_span(event, tz)
         embed.add_field(
             name=_clip(f"{index}. {star}{event.title}", name_max),
-            value=_clip(f"{local_span(event, tz)} · {event.location}{cancelled}",
-                        value_max),
+            value=_clip(f"{when} · {event.location}{cancelled}", value_max),
             inline=False,
         )
 
@@ -176,8 +189,11 @@ def _hour_label(hour: int) -> str:
     return f"{display}:00{suffix}"
 
 
-def day_options(show: Show) -> list[discord.SelectOption]:
-    options = []
+def day_options(show: Show, searching: bool = False) -> list[discord.SelectOption]:
+    """The show's days. A search also offers "All days", its default scope;
+    browsing does not, because a browse panel needs a day."""
+    options = ([discord.SelectOption(label="All days", value=ALL_VALUE)]
+               if searching else [])
     current = show.start_date
     while current <= show.end_date:
         options.append(discord.SelectOption(

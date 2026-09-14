@@ -328,3 +328,52 @@ def test_find_conflicts_returns_earliest_first(conn):
     from paxbot.store.events import get_event
     got = find_conflicts(conn, SHOW, USER, get_event(conn, "west", "new"), THRESHOLD)
     assert [e.gt_id for e in got] == ["early", "late"]
+
+
+# ---- search mode ----------------------------------------------------------
+SAT = date(2026, 9, 5)
+
+
+def test_search_spans_every_day_when_no_day_is_chosen(conn):
+    seed(conn, [
+        make_event(gt_id="sat", title="Jackbox Party", day=SAT),
+        make_event(gt_id="fri", title="Jackbox Party", day=FRI),
+        make_event(gt_id="miss", title="Omegathon", day=FRI),
+    ])
+    state = panel_view(conn, SHOW, PanelFilters(day=None, query="jackbox"),
+                       USER, THRESHOLD, datetime(2026, 9, 1, tzinfo=UTC))
+    assert [e.gt_id for e in state.events] == ["fri", "sat"]
+    assert state.total == 2
+    # No day means no hour options: an hour is only meaningful within a day.
+    assert state.hours == ()
+
+
+def test_search_pages_drop_ins_instead_of_collapsing_them(conn):
+    """The footer collapse exists because drop-ins crowd a time window. A search
+    names them explicitly, and a footer entry has no star button, so collapsing
+    would leave a searched-for drop-in unstarrable from the panel."""
+    seed(conn, [make_event(gt_id="drop", title="Crokinole Freeplay", minutes=480)])
+    state = panel_view(conn, SHOW, PanelFilters(day=None, query="crokinole"),
+                       USER, THRESHOLD, datetime(2026, 9, 1, tzinfo=UTC))
+    assert [e.gt_id for e in state.events] == ["drop"]
+    assert state.drop_ins == ()
+
+
+def test_search_narrows_by_day_hour_and_category(conn):
+    seed(conn, [
+        make_event(gt_id="hit", title="Jackbox", hour=19),     # 12:00 local Fri
+        make_event(gt_id="wrong-hour", title="Jackbox", hour=23),
+        make_event(gt_id="wrong-day", title="Jackbox", hour=19, day=SAT),
+        make_event(gt_id="wrong-cat", title="Jackbox", hour=19, categories=("Tabletop",)),
+    ])
+    state = panel_view(conn, SHOW,
+                       PanelFilters(day=FRI, hour=12, category="Panels", query="jackbox"),
+                       USER, THRESHOLD, datetime(2026, 9, 1, tzinfo=UTC))
+    assert [e.gt_id for e in state.events] == ["hit"]
+
+
+def test_a_filter_without_a_day_must_be_a_search():
+    """All-days only exists inside a search. A browse panel spanning 713 events
+    would be unusable, so the invariant is enforced rather than assumed."""
+    with pytest.raises(ValueError):
+        PanelFilters(day=None)

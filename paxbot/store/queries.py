@@ -53,6 +53,39 @@ def search_events(
     return _rows_to_events(conn, show_slug, conn.execute(sql, params).fetchall())
 
 
+def match_events(
+    conn: sqlite3.Connection,
+    show_slug: str,
+    query: str,
+    *,
+    day: date | None = None,
+    category: str | None = None,
+) -> list[Event]:
+    """The panel's Search: title OR category name, earliest first, uncapped.
+
+    Categories are matched as well as titles because Search is the escape hatch
+    for the categories the 25-option select cannot fit. No limit: the panel
+    pages its own results, so a cap here would silently hide events.
+    """
+    pattern = _like_pattern(query)
+    sql = ("SELECT e.* FROM events e WHERE e.show_slug = ? AND e.cancelled = 0 "
+           "AND (e.title LIKE ? ESCAPE '\\' OR EXISTS ("
+           "SELECT 1 FROM event_categories c WHERE c.show_slug = e.show_slug "
+           "AND c.gt_id = e.gt_id AND c.category LIKE ? ESCAPE '\\'))")
+    params: list[object] = [show_slug, pattern, pattern]
+    if day is not None:
+        sql += " AND e.day = ?"
+        params.append(day.isoformat())
+    if category:
+        # Exact, NOCASE - the same rule events_for_day applies to the select.
+        sql += (" AND EXISTS (SELECT 1 FROM event_categories c "
+                "WHERE c.show_slug = e.show_slug AND c.gt_id = e.gt_id "
+                "AND c.category = ? COLLATE NOCASE)")
+        params.append(category)
+    sql += " ORDER BY e.starts_at, e.title, e.gt_id"
+    return _rows_to_events(conn, show_slug, conn.execute(sql, params).fetchall())
+
+
 def count_matches_before(
     conn: sqlite3.Connection,
     show_slug: str,

@@ -268,3 +268,40 @@ def test_saved_embed_says_how_many_did_not_fit(conn):
     embed = render.saved_embed(saved_view(conn, SHOW, USER, THRESHOLD), THRESHOLD)
     assert len(embed) <= render.EMBED_TOTAL_MAX
     assert "did not fit" in str(embed.to_dict())
+
+
+# ---- search mode ----------------------------------------------------------
+
+def search_state(conn, query="jackbox", **kw):
+    return panel_view(conn, SHOW, PanelFilters(day=None, query=query, **kw),
+                      USER, THRESHOLD, NOW)
+
+
+def test_day_options_offer_all_days_only_while_searching(conn):
+    assert all(o.value != render.ALL_VALUE for o in render.day_options(SHOW))
+    options = render.day_options(SHOW, searching=True)
+    assert options[0].value == render.ALL_VALUE
+    assert len(options) <= render.SELECT_OPTION_MAX
+
+
+def test_search_embed_names_the_query_and_the_day_of_each_result(conn):
+    seed(conn, [make_event(gt_id="sat", title="Jackbox Party", day=date(2026, 9, 5))])
+    embed = render.panel_embed(search_state(conn))
+    assert "jackbox" in embed.title.lower()
+    # Results span days, so a bare time would not say WHEN.
+    assert embed.fields[0].value.startswith("Sat ")
+
+
+def test_search_embed_says_nothing_matched_the_query(conn):
+    seed(conn, [make_event(gt_id="1", title="Omegathon")])
+    embed = render.panel_embed(search_state(conn))
+    assert "jackbox" in embed.description.lower()
+
+
+def test_search_embed_stays_under_the_limit_with_a_maximal_query(conn):
+    query = "x" * 100
+    seed(conn, [make_event(gt_id=str(i), title=query * 5, hour=17, minute=i,
+                           location="L" * 2000) for i in range(6)])
+    embed = render.panel_embed(search_state(conn, query=query))
+    assert len(embed) <= render.EMBED_TOTAL_MAX
+    assert len(embed.title) <= render.FIELD_NAME_MAX
