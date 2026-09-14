@@ -1,0 +1,11 @@
+# Build the image from this checkout instead of pulling the published one:
+#
+#   docker compose -f compose.yml -f compose.build.yml up -d --build
+#
+# Also mounts the checkout's shows.toml, so editing it needs no rebuild.
+services:
+  paxbot:
+    build: .
+    image: paxbot:local
+    volumes:
+      - ./shows.toml:/app/shows.toml:ro

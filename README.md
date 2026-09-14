@@ -30,40 +30,46 @@ Docker at all. Pick one.
 ### Option A: Docker (recommended)
 
 `compose.yml` runs the bot (`paxbot bot`) as a long-running
-`restart: unless-stopped` service — that is what `docker compose up` starts
-by default. The CLI's `sync` and `list` subcommands still work against the
-same image for one-off use; see "Run a one-off command" below.
+`restart: unless-stopped` service from the published image,
+`ghcr.io/toastedcoffee/pax-schedule-bot`. GitHub Actions rebuilds and
+publishes that image on every change to `main`, tagged `latest` and
+`sha-<commit>`. Nothing is built on your server, so the same file works pasted
+into a stack manager, with no copy of the repo.
 
-**Build the image:**
+All settings are variables that `compose.yml` reads — see `.env.example` and
+the tables below. Only `DISCORD_TOKEN` is required (Developer Portal -> your
+application -> Bot -> Reset Token).
 
-    docker compose build
-
-**Create the host data directory and hand it to the container's user.** The
-container runs as non-root uid/gid 568, which is TrueNAS SCALE's built-in
-`apps` user. On TrueNAS, create a dataset for the data and apply the **Apps**
-permission preset; nothing else is needed. Elsewhere, Docker does not do this
-for you — a directory Compose auto-creates for a bind mount comes back owned
-by root, which uid 568 cannot write to:
+**The data directory must be writable by the container's user.** The container
+runs as non-root uid/gid 568, which is TrueNAS SCALE's built-in `apps` user.
+On TrueNAS, create a dataset for the data, apply the **Apps** permission
+preset, and set `PAXBOT_DATA_DIR` to its path, e.g.
+`/mnt/tank/apps/paxbot/data`. Elsewhere, Docker does not do this for you — a
+directory Compose auto-creates for a bind mount comes back owned by root,
+which uid 568 cannot write to, and the bot stops with `cannot open database`:
 
     mkdir -p ./data
     sudo chown 568:568 ./data
 
-To run as a different host user, set `PAXBOT_UID` and `PAXBOT_GID` in `.env`
-and `chown` the directory to match.
+To run as a different host user, set `PAXBOT_UID` and `PAXBOT_GID` and `chown`
+the directory to match.
 
-**Create your `.env`:**
+#### With Dockge or Portainer (e.g. on TrueNAS)
 
-    cp .env.example .env
+1. Create a new stack and paste in `compose.yml`.
+2. Add the variables: in Dockge, the stack's `.env` editor; in Portainer, the
+   stack's environment variables. Set at least `DISCORD_TOKEN` and
+   `PAXBOT_DATA_DIR`.
+3. Deploy.
 
-Then set `DISCORD_TOKEN` inside it (Developer Portal -> your application ->
-Bot -> Reset Token) and adjust the other variables if you need to — see the
-env-var tables below. `compose.yml` sets `env_file: .env`, which Compose
-treats as **required**: `docker compose up` aborts immediately if `.env`
-does not exist.
+**To update**, pull the image and redeploy the stack (in Dockge, **Update**;
+in Portainer, redeploy with **Re-pull image** on).
 
-**Start the bot:**
+#### From a checkout
 
-    docker compose up -d
+    cp .env.example .env        # then set DISCORD_TOKEN
+    docker compose up -d        # start the bot
+    docker compose pull && docker compose up -d   # update later
 
 **Run a one-off command** (does not require the bot to be running; uses the
 same image and data):
@@ -71,16 +77,26 @@ same image and data):
     docker compose run --rm paxbot sync
     docker compose run --rm paxbot list --day 2026-09-04 --category Panels
 
+**Build from source** instead of pulling the published image — for example to
+test a change before it merges:
+
+    docker compose -f compose.yml -f compose.build.yml up -d --build
+
+That override also mounts the checkout's `shows.toml`, so edits to it need no
+rebuild.
+
+#### Details
+
 The database lives at `/data/paxbot.db` inside the container (set via the
 `PAXBOT_DB` environment variable, which the CLI reads whenever `--db` is not
-given explicitly). `compose.yml` mounts `./data` on the host to `/data`. On
-TrueNAS, point the left-hand side of that volume at a dataset, e.g.
-`/mnt/tank/apps/paxbot/data:/data`, instead of a relative host path.
+given explicitly). `PAXBOT_DATA_DIR` on the host, `./data` by default, is
+mounted to `/data`.
 
-`compose.yml` also mounts `./shows.toml` read-only to `/app/shows.toml` and
-sets `PAXBOT_CONFIG=/app/shows.toml`. Adding a convention, or editing dates or
-an API key, is therefore a host-side edit to `shows.toml` — **no image rebuild
-required.**
+The image ships `shows.toml`. To use your own copy — a new convention, or
+changed dates — without waiting for a new image, mount it over the built-in
+one; `compose.yml` has the line commented out:
+
+    - /mnt/tank/apps/paxbot/shows.toml:/app/shows.toml:ro
 
 To find real category names for `--category`, run the query through Python
 inside the container (`python:3.13-slim`, the base image, has no `sqlite3`
@@ -143,8 +159,9 @@ whether you're in a container or running standalone:
 `PAXBOT_DB` and `PAXBOT_CONFIG` above apply here too; both run paths resolve
 the database and config the same way.
 
-**Under Docker**, that environment comes from `.env` (see `.env.example`),
-which `compose.yml` loads via `env_file`.
+**Under Docker**, `compose.yml` passes these through from its variables: a
+`.env` next to it, your stack manager's environment variables, or the shell
+(see `.env.example`).
 
 **Running standalone, `.env` is not read** — there is no `python-dotenv`
 dependency, so set the variables in your shell:
@@ -162,7 +179,9 @@ dependency, so set the variables in your shell:
 | `PAXBOT_SHOW` | no | `west` | Which `shows.toml` block the bot serves |
 | `PAXBOT_GUILD_ID` | no | none (registers globally) | Registers slash commands to one server instantly instead of waiting up to an hour for a global rollout |
 | `PAXBOT_LOG_LEVEL` | no | `INFO` | Python logging level |
+| `PAXBOT_DATA_DIR` | no | `./data` | Docker only: host directory mounted at `/data` for the database |
 | `PAXBOT_UID` / `PAXBOT_GID` | no | `568` | Docker only: the uid/gid the container runs as (TrueNAS SCALE's `apps` user). Must own the data directory |
+| `PAXBOT_TAG` | no | `latest` | Docker only: which published image tag to run; pin a `sha-<commit>` tag to hold a version |
 
 ## Adding another PAX
 
@@ -178,8 +197,9 @@ Add a block to `shows.toml`:
 
 Recover the API key with `python scripts/find_api_key.py east`.
 
-Under Docker, editing `shows.toml` on the host is enough — the file is
-mounted, not baked into the image, so no rebuild is needed.
+Under Docker, the published image picks up the change once it merges to
+`main` and you update the stack. To use it sooner, mount your edited
+`shows.toml` over the built-in one (see "Details" above).
 
 ### Annual rollover
 
