@@ -87,14 +87,10 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         )
         await interaction.response.send_message(
             embed=panel.embed(), view=panel, ephemeral=True)
-        try:
-            panel.message = await interaction.original_response()
-        except discord.HTTPException:
-            # The panel is already on screen; only on_timeout needs the handle.
-            # Without it the controls are never disabled at 14 minutes and the
-            # "expired" notice never appears - a silent degradation, so log it.
-            log.warning("could not capture panel message; timeout will be silent",
-                        exc_info=True)
+        # The command's response is the panel, so the command is its first
+        # anchor. The panel replaces it with each click it answers in place;
+        # this token alone would die 15 minutes after /schedule.
+        panel.anchor = interaction
 
     @schedule.autocomplete("category")
     async def schedule_category_autocomplete(interaction: discord.Interaction,

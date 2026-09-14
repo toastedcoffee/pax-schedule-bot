@@ -24,10 +24,12 @@ from paxbot.views import PanelFilters, default_filters, find_conflicts, panel_vi
 
 log = logging.getLogger(__name__)
 
-# Discord kills the interaction token at 15 minutes. Timing out at 14 leaves a
-# minute in which on_timeout can still edit the message to disable the
-# controls - at 15 the edit itself would fail and the panel would just sit
-# there looking live.
+# discord.py measures this from the LAST click, while every interaction token
+# dies 15 minutes after its OWN creation. Timing out at 14 therefore leaves a
+# minute in which the most recent click's token can still carry the expiry
+# edit - which is why out-of-band edits go through SchedulePanel.anchor and
+# never through the /schedule command, whose token dies 15 minutes after the
+# command however actively the panel is used.
 PANEL_TIMEOUT_SECONDS = 840
 
 
@@ -59,7 +61,13 @@ class SchedulePanel(discord.ui.View):
         self.filters = filters
         self.threshold = threshold_minutes
         self.now_factory = now_factory
-        self.message: discord.Message | None = None
+        # The newest interaction whose response IS this panel: the /schedule
+        # command first, then each click answered by editing the panel in place.
+        # Out-of-band edits (the expiry notice, the refresh after "Add anyway")
+        # must use this. A stored panel message would carry the command's
+        # token, which dies 15 minutes after /schedule even while the panel is
+        # in active use.
+        self.anchor: discord.Interaction | None = None
         self.state = self._load()
         self.rebuild()
 
@@ -71,16 +79,44 @@ class SchedulePanel(discord.ui.View):
     def embed(self) -> discord.Embed:
         return render.panel_embed(self.state)
 
-    async def refresh(self, interaction: discord.Interaction) -> None:
-        """Reload and rewrite the message in place.
+    async def refresh(self, interaction: discord.Interaction,
+                      filters: PanelFilters | None = None) -> None:
+        """Reload and rewrite the message in place, answering the click.
 
         No defer(): reads are single-digit milliseconds and WAL means the sync
         job's writes never block them, so a direct edit is snappier than a
         loading state.
         """
-        self.state = self._load()
-        self.rebuild()
-        await interaction.response.edit_message(embed=self.embed(), view=self)
+        await self._render(interaction.response.edit_message, filters=filters)
+        # This click was answered by editing the panel, so its token - good for
+        # 15 minutes from now - is the one later out-of-band edits must use.
+        self.anchor = interaction
+
+    async def _render(self, edit, *, filters: PanelFilters | None = None) -> None:
+        """Rebuild the panel and push it through `edit`, all or nothing.
+
+        rebuild() detaches every existing button before the edit that would
+        register their replacements in discord.py's view store. If that edit
+        fails, the store keeps pointing at the detached buttons and every later
+        click on the panel is discarded with "View interaction referencing
+        unknown view" - the panel is dead for the rest of its life. So on any
+        failure the previous filters, state and buttons are put back: the store
+        still references those exact button objects, and re-adding them
+        re-attaches them.
+        """
+        previous = (self.filters, self.state, list(self.children))
+        if filters is not None:
+            self.filters = filters
+        try:
+            self.state = self._load()
+            self.rebuild()
+            await edit(embed=self.embed(), view=self)
+        except BaseException:
+            self.filters, self.state, children = previous
+            self.clear_items()
+            for child in children:
+                self.add_item(child)
+            raise
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -105,14 +141,17 @@ class SchedulePanel(discord.ui.View):
     async def on_timeout(self) -> None:
         for child in self.children:
             child.disabled = True
-        if self.message is None:
+        if self.anchor is None:
             return
         try:
-            await self.message.edit(
+            await self.anchor.edit_original_response(
                 content="This panel expired. Run `/schedule` to open a new one.",
                 view=self)
         except discord.HTTPException:
-            # The token may already be dead; there is no surface left to use.
+            # The anchor lags the last click only when that click was not
+            # answered in place - opening Search, starring an event that has
+            # since vanished, or an error - or when a restart orphaned the
+            # panel. Then its token may be dead and there is no surface left.
             log.debug("panel timeout edit failed", exc_info=True)
 
     # ---- components ------------------------------------------------------
@@ -176,41 +215,42 @@ class SchedulePanel(discord.ui.View):
             self.add_item(button)
 
     # ---- callbacks -------------------------------------------------------
+    # Each callback hands its new filters to refresh() rather than assigning
+    # self.filters first, so a failed edit can roll them back with the rest.
     async def _on_day(self, interaction: discord.Interaction) -> None:
         chosen = date.fromisoformat(interaction.data["values"][0])
-        self.filters = PanelFilters(day=chosen, hour=None,
-                                    category=self.filters.category, page=0)
-        await self.refresh(interaction)
+        await self.refresh(interaction, PanelFilters(
+            day=chosen, hour=None, category=self.filters.category, page=0))
 
     async def _on_hour(self, interaction: discord.Interaction) -> None:
         raw = interaction.data["values"][0]
         hour = None if raw == render.ALL_VALUE else int(raw)
-        self.filters = PanelFilters(day=self.filters.day, hour=hour,
-                                    category=self.filters.category, page=0)
-        await self.refresh(interaction)
+        await self.refresh(interaction, PanelFilters(
+            day=self.filters.day, hour=hour,
+            category=self.filters.category, page=0))
 
     async def _on_category(self, interaction: discord.Interaction) -> None:
         raw = interaction.data["values"][0]
         category = None if raw == render.ALL_VALUE else raw
-        self.filters = PanelFilters(day=self.filters.day, hour=self.filters.hour,
-                                    category=category, page=0)
-        await self.refresh(interaction)
+        await self.refresh(interaction, PanelFilters(
+            day=self.filters.day, hour=self.filters.hour,
+            category=category, page=0))
 
     async def _on_nav(self, interaction: discord.Interaction) -> None:
         kind, _ = ids.decode(interaction.data["custom_id"])
-        if kind == ids.PREV:
-            self.filters = _with_page(self.filters, self.filters.page - 1)
-        elif kind == ids.NEXT:
-            self.filters = _with_page(self.filters, self.filters.page + 1)
-        elif kind == ids.RESET:
-            self.filters = PanelFilters(day=self.show.start_date)
-        elif kind == ids.NOW:
-            self.filters = default_filters(self.conn, self.show,
-                                           self.now_factory())
-        elif kind == ids.SEARCH:
+        if kind == ids.SEARCH:
             await interaction.response.send_modal(SearchModal(self))
             return
-        await self.refresh(interaction)
+        filters = None
+        if kind == ids.PREV:
+            filters = _with_page(self.filters, self.filters.page - 1)
+        elif kind == ids.NEXT:
+            filters = _with_page(self.filters, self.filters.page + 1)
+        elif kind == ids.RESET:
+            filters = PanelFilters(day=self.show.start_date)
+        elif kind == ids.NOW:
+            filters = default_filters(self.conn, self.show, self.now_factory())
+        await self.refresh(interaction, filters)
 
     async def _on_star(self, interaction: discord.Interaction) -> None:
         kind, gt_id = ids.decode(interaction.data["custom_id"])
@@ -233,20 +273,18 @@ class SchedulePanel(discord.ui.View):
             return
 
         # Surfaced, never blocked: overlapping deliberately is legitimate.
-        tz = ZoneInfo(self.show.timezone)
+        #
+        # Answer the click by editing the panel, then prompt in a followup.
+        # Answering with the prompt itself would make this click's original
+        # response the prompt rather than the panel, so the click could not
+        # serve as the anchor that "Add anyway" refreshes the panel through.
+        await self.refresh(interaction)
         confirm = ConfirmSave(self.conn, self.show, self.user_id, gt_id, panel=self)
-        await interaction.response.send_message(
-            render.conflict_text(event, clashes, tz),
-            view=confirm, ephemeral=True)
-        try:
-            confirm.message = await interaction.original_response()
-        except discord.HTTPException:
-            # Same reasoning as the panel's own message capture below: without
-            # this handle on_timeout cannot edit the prompt, and it silently
-            # stays live-looking after Discord drops it.
-            log.warning(
-                "could not capture confirm-save message; timeout will be silent",
-                exc_info=True)
+        # The followup's message edits through this click's token, which
+        # outlives the prompt's own 14-minute timeout.
+        confirm.message = await interaction.followup.send(
+            render.conflict_text(event, clashes, ZoneInfo(self.show.timezone)),
+            view=confirm, ephemeral=True, wait=True)
 
 
 def _with_page(filters: PanelFilters, page: int) -> PanelFilters:
@@ -288,15 +326,18 @@ class ConfirmSave(discord.ui.View):
 
     async def _confirm(self, interaction: discord.Interaction) -> None:
         save_event(self.conn, str(self.user_id), self.show.slug, self.gt_id)
-        if self.panel is not None:
-            self.panel.state = self.panel._load()
-            self.panel.rebuild()
-            if self.panel.message is not None:
-                try:
-                    await self.panel.message.edit(embed=self.panel.embed(),
-                                                  view=self.panel)
-                except discord.HTTPException:
-                    log.debug("panel refresh after confirm failed", exc_info=True)
+        panel = self.panel
+        if panel is not None and panel.anchor is not None:
+            # Out of band: this click belongs to the prompt, not the panel, so
+            # the panel refreshes through its own newest click - the star click
+            # that raised this prompt, or anything since. That token is always
+            # under 15 minutes old here, because this prompt times out 14
+            # minutes after it appears. _render rolls back on failure, so a
+            # failed refresh costs the filled star, never the panel.
+            try:
+                await panel._render(panel.anchor.edit_original_response)
+            except discord.HTTPException:
+                log.debug("panel refresh after confirm failed", exc_info=True)
         await interaction.response.edit_message(content="Added.", view=None)
 
     async def _cancel(self, interaction: discord.Interaction) -> None:
