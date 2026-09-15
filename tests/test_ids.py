@@ -16,7 +16,8 @@ def test_is_namespaced_so_other_apps_do_not_collide():
 
 
 def test_every_kind_fits_discords_limit_with_a_long_argument():
-    """gt_ids are numeric and short, but the ceiling must hold regardless."""
+    """gt_ids (GrowTix's event ids, the upstream schedule source) are numeric
+    and short, but the ceiling must hold regardless."""
     for kind in ids.ALL_KINDS:
         built = ids.encode(kind, "9" * 32)
         assert len(built) <= ids.CUSTOM_ID_MAX, kind

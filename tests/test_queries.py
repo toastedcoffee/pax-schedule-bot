@@ -131,6 +131,21 @@ def test_count_matches_before_powers_the_earlier_hint(conn):
     assert count_matches_before(conn, "west", "Board", before) == 2
 
 
+def test_count_matches_before_scopes_to_one_day(conn):
+    """The hint is day-scoped when /find's own day filter is set, so a match
+    on another day must not inflate the count."""
+    fri = date(2026, 9, 4)
+    sat = date(2026, 9, 5)
+    seed(conn, [
+        make_event(gt_id="a", title="Board Games", hour=9, day=fri),
+        make_event(gt_id="b", title="Board Games", hour=10, day=fri),
+        make_event(gt_id="c", title="Board Games", hour=9, day=sat),
+    ])
+    before = datetime(2026, 9, 5, 15, 0, tzinfo=UTC)
+    assert count_matches_before(conn, "west", "Board", before, day=fri) == 2
+    assert count_matches_before(conn, "west", "Board", before, day=sat) == 1
+
+
 # ---- match_events: the panel's Search, titles AND category names ----------
 
 def test_match_finds_an_event_by_category_name_alone(conn):
