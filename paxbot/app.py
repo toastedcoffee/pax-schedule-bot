@@ -11,7 +11,7 @@ import logging
 import os
 import sqlite3
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import discord
 from discord.ext import tasks
@@ -21,7 +21,8 @@ from paxbot.bot.commands import BotDeps
 from paxbot.cli import _resolve_config, _resolve_db
 from paxbot.config import load_config
 from paxbot.store.db import SchemaVersionError, connect
-from paxbot.sync.runner import run_sync
+from paxbot.sync.policy import shows_to_sync
+from paxbot.sync.runner import SyncReport, run_sync
 
 log = logging.getLogger(__name__)
 
@@ -65,27 +66,43 @@ def _database_hint(db_path: str) -> str:
         "default).")
 
 
-def _sync_once(db_path: str, show) -> None:
-    """Run one sync on its OWN connection.
+def _sync_due(db_path: str, shows) -> None:
+    """Sync every due show on ONE connection, in a worker thread.
 
     sqlite3 connections default to check_same_thread=True, so reusing the
-    bot's connection from asyncio.to_thread would raise. This runs in a worker
-    thread precisely so a 40-second fetch cannot stall the gateway heartbeat.
+    bot's connection from asyncio.to_thread would raise. This runs off the
+    event loop precisely so a 40-second fetch cannot stall the gateway
+    heartbeat - and with several shows that matters more, not less.
+
+    Each show is isolated: one show whose upstream is broken, or whose payload
+    trips the guard rail, must never cost the others their sync.
     """
     conn = connect(db_path)
     try:
-        report = run_sync(conn, show)
-        log.info("sync ok: added %d changed %d cancelled %d",
-                 report.added, report.changed, report.removed)
+        for show in shows:
+            try:
+                report = run_sync(conn, show)
+                log.info("sync ok for %s: added %d changed %d cancelled %d",
+                         show.slug, report.added, report.changed, report.removed)
+            except Exception:
+                log.exception("sync failed for %s; other shows continue",
+                              show.slug)
     finally:
         conn.close()
 
 
-def _last_ok_sync(conn: sqlite3.Connection, show_slug: str) -> datetime | None:
-    row = conn.execute(
-        "SELECT ran_at FROM sync_runs WHERE show_slug = ? AND ok = 1 "
-        "ORDER BY ran_at DESC LIMIT 1", (show_slug,)).fetchone()
-    return datetime.fromisoformat(row["ran_at"]) if row else None
+def _last_ok_syncs(conn: sqlite3.Connection) -> dict[str, datetime]:
+    """Every show's most recent SUCCESSFUL sync.
+
+    A show with no entry has never synced successfully, which shows_to_sync
+    reads as "poll it now" - that is the backfill path for a show added to
+    shows.toml after it ended.
+    """
+    rows = conn.execute(
+        "SELECT show_slug, MAX(ran_at) AS ran_at FROM sync_runs "
+        "WHERE ok = 1 GROUP BY show_slug"
+    ).fetchall()
+    return {r["show_slug"]: datetime.fromisoformat(r["ran_at"]) for r in rows}
 
 
 def build(argv=None) -> tuple[PaxClient, str, str]:
@@ -137,27 +154,28 @@ def _attach_sync_loop(client: PaxClient, deps: BotDeps, db_path: str) -> None:
 
     @tasks.loop(hours=IN_SHOW_HOURS)
     async def sync_loop():
-        # This try/except is load-bearing and is the single most important line
-        # in this phase. discord.py's tasks.loop retries only a fixed whitelist
-        # (OSError, GatewayNotFound, ConnectionClosed, aiohttp.ClientError,
-        # asyncio.TimeoutError). Anything outside it reaches the error handler,
-        # is logged, and then RE-RAISED, which terminates the loop permanently -
-        # the bot keeps serving stale data and never syncs again. LeapError,
-        # GuardRailError and sqlite3.Error are all outside that whitelist, so
-        # the first guard-rail rejection would end syncing for the life of the
-        # process, turning "degrade to stale-but-correct" into
-        # "degrade to stale-forever-and-silent".
+        # This try/except is load-bearing and is the single most important
+        # line in this module. discord.py's tasks.loop retries only a fixed
+        # whitelist (OSError, GatewayNotFound, ConnectionClosed,
+        # aiohttp.ClientError, asyncio.TimeoutError). Anything outside it
+        # reaches the error handler, is logged, and then RE-RAISED, which
+        # terminates the loop permanently - the bot keeps serving stale data
+        # and never syncs again. LeapError, GuardRailError and sqlite3.Error
+        # are all outside that whitelist, so the first guard-rail rejection
+        # would end syncing for the life of the process, turning "degrade to
+        # stale-but-correct" into "degrade to stale-forever-and-silent".
         try:
             now = datetime.now(UTC)
-            wanted = (IN_SHOW_HOURS if deps.show.is_running(now)
-                      else OFF_SEASON_HOURS)
-            last = _last_ok_sync(deps.conn, deps.show.slug)
-            if last is not None and now - last < timedelta(hours=wanted):
-                # Also why every bot restart does not trigger a full 171 KB
-                # fetch: tasks.loop runs its first iteration immediately.
-                log.info("skipping sync: last good run was %s", last)
+            due = shows_to_sync(
+                tuple(deps.config.shows.values()),
+                _last_ok_syncs(deps.conn),
+                now, IN_SHOW_HOURS, OFF_SEASON_HOURS)
+            if not due:
+                # Also why every bot restart does not trigger a full fetch of
+                # every show: tasks.loop runs its first iteration immediately.
+                log.info("no shows due for sync")
                 return
-            await asyncio.to_thread(_sync_once, db_path, deps.show)
+            await asyncio.to_thread(_sync_due, db_path, due)
         except Exception:
             log.exception("sync failed; the loop continues")
 
