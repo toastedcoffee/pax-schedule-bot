@@ -16,6 +16,7 @@ from discord import app_commands
 
 from paxbot.bot import render
 from paxbot.bot.panel import ConfirmSave, SchedulePanel, _apologise
+from paxbot.bot.setup_view import SetupView
 from paxbot.config import Config, DayError, Show
 from paxbot.store.events import get_event
 from paxbot.store.guilds import followed_slugs
@@ -262,6 +263,22 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
             ephemeral=True)
 
     myschedule.autocomplete("day")(day_autocomplete)
+
+    @tree.command(name="setup", description="Choose which PAX shows this server follows")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    async def setup(interaction: discord.Interaction):
+        # default_permissions hides the command from non-admins in the picker,
+        # which is better than accepting the interaction and refusing it after
+        # the fact.
+        view = SetupView(deps, interaction.guild_id, interaction.user.id)
+        await interaction.response.send_message(
+            embed=view.embed(), view=view, ephemeral=True)
+        try:
+            view.message = await interaction.original_response()
+        except discord.HTTPException:
+            log.warning("could not capture setup panel; timeout will be silent",
+                        exc_info=True)
 
 
 def _show_start(show: Show) -> datetime:
