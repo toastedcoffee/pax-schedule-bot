@@ -1,7 +1,10 @@
-from datetime import UTC, date, datetime
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from paxbot.bot import ids, render
+from paxbot.bot.render import MAX_SHOW_OPTIONS, setup_embed, show_options
+from paxbot.config import Show
 from paxbot.store.db import transaction
 from paxbot.store.events import upsert_events
 from paxbot.views import PanelFilters, panel_view, saved_view
@@ -305,3 +308,64 @@ def test_search_embed_stays_under_the_limit_with_a_maximal_query(conn):
     embed = render.panel_embed(search_state(conn, query=query))
     assert len(embed) <= render.EMBED_TOTAL_MAX
     assert len(embed.title) <= render.FIELD_NAME_MAX
+
+
+# ---- /setup ------------------------------------------------------------
+
+def _setup_show(slug, start, end):
+    return Show(slug=slug, name=slug.upper(), base_url="https://e.invalid",
+                api_key="k", timezone="America/Los_Angeles",
+                start_date=start, end_date=end)
+
+
+def test_show_options_marks_the_followed_ones_as_default():
+    shows = [_setup_show("west", date(2026, 9, 4), date(2026, 9, 7)),
+             _setup_show("east", date(2026, 3, 26), date(2026, 3, 29))]
+    options = show_options(shows, frozenset({"west"}), frozenset({"west", "east"}))
+    by_value = {o.value: o for o in options}
+    assert by_value["west"].default is True
+    assert by_value["east"].default is False
+
+
+def test_show_options_says_when_a_show_has_no_data_yet():
+    shows = [_setup_show("unplugged", date(2026, 12, 4), date(2026, 12, 6))]
+    options = show_options(shows, frozenset(), frozenset())
+    assert "no schedule data yet" in options[0].description
+
+
+def test_show_options_never_exceeds_discords_option_cap():
+    """Discord truncates past 25 silently, so the cap is asserted, not hoped for."""
+    shows = [_setup_show(f"s{i}", date(2026, 1, 1) + timedelta(days=i),
+                         date(2026, 1, 2) + timedelta(days=i))
+             for i in range(40)]
+    options = show_options(shows, frozenset(), frozenset())
+    assert len(options) == MAX_SHOW_OPTIONS == 25
+
+
+def test_show_options_labels_and_descriptions_fit_discords_limits():
+    long_name = _setup_show("x", date(2026, 1, 1), date(2026, 1, 2))
+    long_name = replace(long_name, name="N" * 300)
+    options = show_options([long_name], frozenset(), frozenset())
+    assert len(options[0].label) <= 100
+    assert len(options[0].description) <= 100
+
+
+def test_setup_embed_states_the_follow_everything_mode_in_words():
+    west = _setup_show("west", date(2026, 9, 4), date(2026, 9, 7))
+    embed = setup_embed([west], None, west)
+    assert "every show" in embed.description
+    assert "WEST" in embed.description
+
+
+def test_setup_embed_states_the_explicit_mode_and_names_the_shows():
+    west = _setup_show("west", date(2026, 9, 4), date(2026, 9, 7))
+    east = _setup_show("east", date(2026, 3, 26), date(2026, 3, 29))
+    embed = setup_embed([west, east], frozenset({"east"}), east)
+    assert "exactly" in embed.description
+    assert "EAST" in embed.description
+
+
+def test_setup_embed_is_honest_when_no_show_has_data():
+    west = _setup_show("west", date(2026, 9, 4), date(2026, 9, 7))
+    embed = setup_embed([west], None, None)
+    assert "no show has schedule data" in embed.description

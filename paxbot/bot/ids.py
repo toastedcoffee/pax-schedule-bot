@@ -24,9 +24,11 @@ SEARCH = "q"
 SEL_DAY = "fd"
 SEL_HOUR = "fh"
 SEL_CATEGORY = "fc"
+SEL_SHOWS = "fs"          # /setup's multi-select
+FOLLOW_ALL = "fa"         # /setup's "Follow every show" button
 
 ALL_KINDS = (STAR, UNSTAR, CONFIRM, CANCEL, PREV, NEXT, NOW, RESET, SEARCH,
-             SEL_DAY, SEL_HOUR, SEL_CATEGORY)
+             SEL_DAY, SEL_HOUR, SEL_CATEGORY, SEL_SHOWS, FOLLOW_ALL)
 
 
 class IdError(Exception):
