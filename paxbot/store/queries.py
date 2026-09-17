@@ -141,3 +141,18 @@ def distinct_categories(
         (show_slug,),
     ).fetchall()
     return [(r["category"], r["n"]) for r in rows]
+
+
+def shows_with_data(conn: sqlite3.Connection) -> frozenset[str]:
+    """Slugs holding at least one live event.
+
+    This is the bot's only observable definition of "has a published
+    schedule": it cannot see upstream intent, only what it has synced.
+    Cancelled events do not count - a show whose every event has vanished
+    upstream cannot be usefully browsed, and offering it would resolve the
+    panel to an empty show.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT show_slug FROM events WHERE cancelled = 0"
+    ).fetchall()
+    return frozenset(r["show_slug"] for r in rows)

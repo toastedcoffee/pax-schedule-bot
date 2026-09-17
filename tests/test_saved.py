@@ -17,8 +17,8 @@ from tests.conftest import make_event
 USER = "123456789012345678"
 
 
-def test_schema_version_is_two():
-    assert SCHEMA_VERSION == 2
+def test_schema_version_is_three():
+    assert SCHEMA_VERSION == 3
 
 
 def test_save_then_read_back(conn):
@@ -121,7 +121,7 @@ def test_migrates_a_v1_database(tmp_path):
 
     c = connect(path)
     try:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert c.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         names = {r["name"] for r in c.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "saved" in names
