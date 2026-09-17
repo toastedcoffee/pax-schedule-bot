@@ -18,14 +18,16 @@ from paxbot.bot import render
 from paxbot.bot.panel import ConfirmSave, SchedulePanel, _apologise
 from paxbot.config import Config, DayError, Show
 from paxbot.store.events import get_event
+from paxbot.store.guilds import followed_slugs
 from paxbot.store.queries import (
     count_matches_before,
     distinct_categories,
     search_events,
+    shows_with_data,
     upcoming_events,
 )
 from paxbot.store.saved import save_event, saved_gt_ids, unsave_event
-from paxbot.views import default_filters, find_conflicts, saved_view
+from paxbot.views import active_show, default_filters, find_conflicts, saved_view
 
 log = logging.getLogger(__name__)
 
@@ -42,23 +44,39 @@ AUTOCOMPLETE_LIMIT = 25
 class BotDeps:
     conn: sqlite3.Connection
     config: Config
-    show: Show
 
     def now(self) -> datetime:
         return datetime.now(UTC)
 
-    def resolve_show(self, guild_id: int | None) -> Show:
+    def resolve_show(self, guild_id: int | None) -> Show | None:
         """The ONLY place the show is chosen.
 
-        Phase 2 ignores guild_id and returns the configured default. Phase 3
-        replaces this body with a guild_config lookup and nothing else moves.
-        PAX Unplugged in December makes that a dated requirement, not a
-        hypothetical - which is why the seam exists now.
+        "Which show" is a time question, not a user question, so no command
+        asks the user: a guild follows a SET of shows and the bot picks the
+        current one. A guild that has never run /setup follows everything,
+        which is what makes adding a block to shows.toml enough on its own.
+
+        Returns None when no followed show has any synced data - a fresh
+        install before its first sync. Callers must say so rather than
+        failing silently.
         """
-        return self.show
+        slugs = followed_slugs(self.conn, str(guild_id)) if guild_id else None
+        candidates = [show for show in self.config.shows.values()
+                      if slugs is None or show.slug in slugs]
+        return active_show(candidates, shows_with_data(self.conn), self.now(),
+                           self.config.handover_grace_days)
 
 
 DAY_HELP = "A show day: Saturday, Sat, or 2026-09-05"
+
+NO_SHOW_MESSAGE = (
+    "No schedule data yet — the bot syncs shortly after starting. "
+    "If this lasts, an admin should check the logs, or run `/setup` to pick "
+    "a show that has published its schedule.")
+
+
+async def _say_no_show(interaction: discord.Interaction) -> None:
+    await interaction.response.send_message(NO_SHOW_MESSAGE, ephemeral=True)
 
 
 def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
@@ -72,6 +90,8 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         """
         try:
             show = deps.resolve_show(interaction.guild_id)
+            if show is None:
+                return []
             needle = current.strip().casefold()
             choices = []
             for day in show.days():
@@ -92,6 +112,9 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
                        day: str | None = None,
                        category: str | None = None):
         show = deps.resolve_show(interaction.guild_id)
+        if show is None:
+            await _say_no_show(interaction)
+            return
         filters = default_filters(deps.conn, show, deps.now())
         if day:
             try:
@@ -135,6 +158,8 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         # argument, not a component with a 25-option ceiling, so a substring
         # match can surface any tail category the select cannot.
         show = deps.resolve_show(interaction.guild_id)
+        if show is None:
+            return []
         cats = distinct_categories(deps.conn, show.slug)
         if current:
             needle = current.casefold()
@@ -150,6 +175,9 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
                    query: app_commands.Range[str, 2, 100],
                    day: str | None = None):
         show = deps.resolve_show(interaction.guild_id)
+        if show is None:
+            await _say_no_show(interaction)
+            return
         event = get_event(deps.conn, show.slug, query)
         if event is None:
             # `query` holds a gt_id when chosen from autocomplete; anything
@@ -187,6 +215,8 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         deps: BotDeps, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice]:
         show = deps.resolve_show(interaction.guild_id)
+        if show is None:
+            return []
         tz = ZoneInfo(show.timezone)
         now = deps.now()
         running = show.is_running(now)
@@ -214,6 +244,9 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
     @app_commands.describe(day=DAY_HELP)
     async def myschedule(interaction: discord.Interaction, day: str | None = None):
         show = deps.resolve_show(interaction.guild_id)
+        if show is None:
+            await _say_no_show(interaction)
+            return
         only = None
         if day:
             try:

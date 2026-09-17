@@ -7,13 +7,19 @@ limits, and the shape of what gets registered.
 """
 import asyncio
 import sqlite3
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import discord
 from discord import app_commands
 
 from paxbot.bot import commands
-from paxbot.config import load_config
+from paxbot.bot.commands import BotDeps
+from paxbot.config import Config, Show, load_config
+from paxbot.store.db import transaction
+from paxbot.store.events import upsert_events
+from paxbot.store.guilds import set_followed
+from tests.conftest import make_event
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,8 +38,7 @@ def _registered_tree():
         client = discord.Client(intents=discord.Intents.default())
         tree = app_commands.CommandTree(client)
         config = load_config(REPO_ROOT / "shows.toml")
-        deps = commands.BotDeps(conn=sqlite3.connect(":memory:"),
-                                config=config, show=config.show("west"))
+        deps = commands.BotDeps(conn=sqlite3.connect(":memory:"), config=config)
         commands.setup_commands(tree, deps)
         await client.close()
         return tree
@@ -66,3 +71,47 @@ def test_every_day_option_offers_autocomplete():
                if "day" in command._params
                and command._params["day"].autocomplete is None]
     assert missing == []
+
+
+def test_resolve_show_returns_none_when_nothing_has_data(conn):
+    show = Show(slug="west", name="W", base_url="https://e.invalid", api_key="k",
+                timezone="America/Los_Angeles",
+                start_date=date(2026, 9, 4), end_date=date(2026, 9, 7))
+    deps = BotDeps(conn=conn, config=Config(shows={"west": show},
+                                            drop_in_threshold_minutes=240))
+    assert deps.resolve_show(123) is None
+
+
+def test_resolve_show_honours_a_guilds_follow_set(conn):
+
+    def show(slug, start, end):
+        return Show(slug=slug, name=slug, base_url="https://e.invalid",
+                    api_key="k", timezone="America/Los_Angeles",
+                    start_date=start, end_date=end)
+
+    shows = {"west": show("west", date(2026, 9, 4), date(2026, 9, 7)),
+             "east": show("east", date(2026, 3, 26), date(2026, 3, 29))}
+    with transaction(conn):
+        upsert_events(conn, [make_event(gt_id="1", show_slug="west"),
+                             make_event(gt_id="2", show_slug="east")])
+    set_followed(conn, "42", ["east"], "1", datetime(2026, 9, 16, tzinfo=UTC))
+
+    deps = BotDeps(conn=conn, config=Config(shows=shows,
+                                            drop_in_threshold_minutes=240))
+    assert deps.resolve_show(42).slug == "east"
+    # An unconfigured guild follows everything, so it gets the later show.
+    assert deps.resolve_show(99).slug == "west"
+    # A DM has no guild and follows everything too.
+    assert deps.resolve_show(None).slug == "west"
+
+
+def test_a_followed_slug_no_longer_in_config_is_ignored(conn):
+    show = Show(slug="west", name="W", base_url="https://e.invalid", api_key="k",
+                timezone="America/Los_Angeles",
+                start_date=date(2026, 9, 4), end_date=date(2026, 9, 7))
+    with transaction(conn):
+        upsert_events(conn, [make_event(gt_id="1", show_slug="west")])
+    set_followed(conn, "42", ["west", "gone"], "1", datetime(2026, 9, 16, tzinfo=UTC))
+    deps = BotDeps(conn=conn, config=Config(shows={"west": show},
+                                            drop_in_threshold_minutes=240))
+    assert deps.resolve_show(42).slug == "west"

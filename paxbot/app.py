@@ -66,6 +66,20 @@ def _database_hint(db_path: str) -> str:
         "default).")
 
 
+def _warn_if_show_env_set() -> None:
+    """Say so when a retired variable is set, rather than ignoring it silently.
+
+    The live deployment sets PAXBOT_SHOW. A value that quietly does nothing is
+    exactly the failure the database hint exists to prevent - so name it, say
+    what replaced it, and say where the choice lives now.
+    """
+    if os.environ.get("PAXBOT_SHOW", "").strip():
+        log.warning(
+            "PAXBOT_SHOW=%s is set and ignored. shows.toml decides which "
+            "shows this instance serves; /setup narrows it per server.",
+            os.environ["PAXBOT_SHOW"].strip())
+
+
 def _sync_due(db_path: str, shows) -> None:
     """Sync every due show on ONE connection, in a worker thread.
 
@@ -123,11 +137,11 @@ def build(argv=None) -> tuple[PaxClient, str, str]:
     except Exception as exc:
         raise StartupError(f"cannot load config {config_path}: {exc}") from exc
 
-    slug = os.environ.get("PAXBOT_SHOW", "west")
-    try:
-        show = config.show(slug)
-    except KeyError as exc:
-        raise StartupError(str(exc).strip("\"'")) from None
+    if not config.shows:
+        raise StartupError(
+            f"{config_path} defines no shows. Add a [shows.<slug>] block - "
+            "see shows.toml in the repository for the shape.")
+    _warn_if_show_env_set()
 
     db_path = _resolve_db(None)
     try:
@@ -144,7 +158,7 @@ def build(argv=None) -> tuple[PaxClient, str, str]:
         raise StartupError(
             f"PAXBOT_GUILD_ID must be a number, got {raw_guild!r}") from exc
 
-    deps = BotDeps(conn=conn, config=config, show=show)
+    deps = BotDeps(conn=conn, config=config)
     client = PaxClient(deps, guild_id)
     _attach_sync_loop(client, deps, db_path)
     return client, token, db_path

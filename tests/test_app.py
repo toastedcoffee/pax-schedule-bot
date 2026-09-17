@@ -88,3 +88,25 @@ def test_a_failing_show_does_not_stop_the_others(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "run_sync", fake_run_sync)
     app._sync_due(str(tmp_path / "db.sqlite"), [show("broken"), show("west")])
     assert synced == ["west"]
+
+
+def test_a_config_with_no_shows_is_refused_at_startup(tmp_path, monkeypatch):
+    config = tmp_path / "shows.toml"
+    config.write_text("[defaults]\n", encoding="utf-8")
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("PAXBOT_CONFIG", str(config))
+    monkeypatch.setenv("PAXBOT_DB", str(tmp_path / "paxbot.db"))
+    with pytest.raises(app.StartupError) as caught:
+        app.build()
+    assert "no shows" in str(caught.value)
+
+
+def test_paxbot_show_is_reported_as_ignored(monkeypatch, caplog):
+    """The live deployment sets this variable. A value that silently does
+    nothing is the failure the database hint exists to prevent."""
+    monkeypatch.setenv("PAXBOT_SHOW", "west")
+    with caplog.at_level("WARNING"):
+        app._warn_if_show_env_set()
+    assert "PAXBOT_SHOW" in caplog.text
+    assert "shows.toml" in caplog.text
+    assert "/setup" in caplog.text
