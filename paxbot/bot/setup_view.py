@@ -77,8 +77,34 @@ class SetupView(discord.ui.View):
         self.add_item(button)
 
     async def _render(self, interaction: discord.Interaction) -> None:
-        self.rebuild()
-        await interaction.response.edit_message(embed=self.embed(), view=self)
+        """Rebuild the panel and answer the click with it, all or nothing.
+
+        rebuild() detaches the live select and button - clear_items() sets
+        each child's view to None - before the edit that would register their
+        replacements in discord.py's view store. If that edit fails, the store
+        still points at the detached items, and discord.py discards every later
+        click on them as "View interaction referencing unknown view": the panel
+        is dead, and unlike SchedulePanel there is no later successful click to
+        heal it. So on any failure the previous children go back: the store
+        references those exact objects, and re-adding them re-attaches them.
+
+        Children are the whole of the rollback. SchedulePanel also restores its
+        filters and state because it holds them across renders; nothing is
+        missing here - this view keeps no per-render state, reading the follow
+        set back out of the database on every rebuild.
+        """
+        previous = list(self.children)
+        try:
+            self.rebuild()
+            await interaction.response.edit_message(embed=self.embed(), view=self)
+        except BaseException:
+            self.clear_items()
+            for child in previous:
+                self.add_item(child)
+            # Re-raised so on_error still answers the interaction; swallowing
+            # it here would leave the click unanswered and Discord would show
+            # a bare "This interaction failed" over a write that succeeded.
+            raise
 
     # ---- callbacks -------------------------------------------------------
     async def _on_select(self, interaction: discord.Interaction) -> None:
