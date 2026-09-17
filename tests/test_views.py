@@ -6,7 +6,7 @@ from paxbot.config import Show
 from paxbot.store.db import transaction
 from paxbot.store.events import mark_cancelled, upsert_events
 from paxbot.store.saved import save_event
-from paxbot.views import PAGE_SIZE, PanelFilters, default_filters, panel_view
+from paxbot.views import PAGE_SIZE, PanelFilters, active_show, default_filters, panel_view
 from tests.conftest import make_event
 
 SHOW = Show(
@@ -377,3 +377,77 @@ def test_a_filter_without_a_day_must_be_a_search():
     would be unusable, so the invariant is enforced rather than assumed."""
     with pytest.raises(ValueError):
         PanelFilters(day=None)
+
+
+# ---- active_show -------------------------------------------------------
+
+
+def _show(slug, start, end, tz="America/Los_Angeles"):
+    return Show(slug=slug, name=slug.upper(), base_url="https://example.invalid",
+                api_key="k", timezone=tz, start_date=start, end_date=end)
+
+
+WEST = _show("west", date(2026, 9, 4), date(2026, 9, 7))
+EAST = _show("east", date(2026, 3, 26), date(2026, 3, 29))
+AUS = _show("aus", date(2026, 10, 9), date(2026, 10, 11), "Australia/Melbourne")
+ALL = frozenset({"west", "east", "aus"})
+
+
+def at(y, m, d, hour=12):
+    return datetime(y, m, d, hour, tzinfo=UTC)
+
+
+def test_a_running_show_beats_an_upcoming_one():
+    """On the Saturday of PAX West the soonest upcoming show is irrelevant."""
+    assert active_show([WEST, AUS], ALL, at(2026, 9, 5), 14) is WEST
+
+
+def test_a_show_inside_the_grace_window_beats_an_upcoming_one():
+    """The Monday after West, a whole weekend's schedule must stay reachable."""
+    assert active_show([WEST, AUS], ALL, at(2026, 9, 8), 14) is WEST
+
+
+def test_grace_expiry_falls_through_to_upcoming():
+    assert active_show([WEST, AUS], ALL, at(2026, 9, 22), 14) is AUS
+
+
+def test_grace_expiry_with_nothing_upcoming_falls_through_to_past():
+    assert active_show([WEST, EAST], ALL, at(2026, 9, 22), 14) is WEST
+
+
+def test_a_show_with_no_data_is_never_chosen_even_when_running():
+    assert active_show([WEST, EAST], frozenset({"east"}), at(2026, 9, 5), 14) is EAST
+
+
+def test_a_show_with_no_data_is_never_chosen_when_upcoming():
+    assert active_show([WEST, AUS], frozenset({"west"}), at(2026, 9, 22), 14) is WEST
+
+
+def test_no_candidates_returns_none():
+    assert active_show([WEST], frozenset(), at(2026, 9, 5), 14) is None
+    assert active_show([], ALL, at(2026, 9, 5), 14) is None
+
+
+def test_ties_break_on_slug_so_the_result_is_deterministic():
+    a = _show("aaa", date(2026, 9, 4), date(2026, 9, 7))
+    z = _show("zzz", date(2026, 9, 4), date(2026, 9, 7))
+    chosen = active_show([z, a], frozenset({"aaa", "zzz"}), at(2026, 9, 5), 14)
+    assert chosen.slug == "aaa"
+
+
+def test_a_naive_now_is_refused():
+    with pytest.raises(ValueError):
+        active_show([WEST], ALL, datetime(2026, 9, 5, 12), 14)
+
+
+def test_the_boundary_is_evaluated_in_the_shows_own_timezone():
+    """2026-09-08 06:00 UTC is still Sep 7 in Seattle - West is still RUNNING.
+
+    Judging this in UTC would report the show over a day early.
+    """
+    assert active_show([WEST], ALL, datetime(2026, 9, 8, 6, tzinfo=UTC), 0) is WEST
+
+
+def test_a_melbourne_show_is_judged_on_its_own_side_of_the_dateline():
+    """2026-10-08 20:00 UTC is already Oct 9 in Melbourne - Aus is RUNNING."""
+    assert active_show([AUS], ALL, datetime(2026, 10, 8, 20, tzinfo=UTC), 14) is AUS

@@ -11,6 +11,7 @@ knows only SQL.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence, Set as AbstractSet
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -279,3 +280,76 @@ def saved_view(
         missing=missing_saved_ids(conn, user_id, show.slug),
         total=len(events),
     )
+
+
+def _earliest_start(shows: list[Show]) -> Show:
+    return min(shows, key=lambda s: (s.start_date, s.slug))
+
+
+def _latest_end(shows: list[Show]) -> Show:
+    # Negated ordinal so the LATEST end wins while ties still break on the
+    # smallest slug, matching _earliest_start. max() with a plain key would
+    # break ties on the largest slug instead, and the two helpers would
+    # disagree about what "deterministic" means.
+    return min(shows, key=lambda s: (-s.end_date.toordinal(), s.slug))
+
+
+def active_show(
+    shows: Sequence[Show],
+    with_data: AbstractSet[str],
+    now: datetime,
+    grace_days: int,
+) -> Show | None:
+    """The one show a guild should be looking at right now.
+
+    "Which show" is a time question, not a user question: a standing per-guild
+    setting goes stale and needs an override, a computed one never does.
+
+    Tiers, first non-empty wins:
+      1. running now          2. ended within grace_days
+      3. soonest upcoming     4. most recently ended
+
+    Tier 1 above tier 3 because on the Saturday of a show the soonest
+    *upcoming* show is next year's, and a literal reading of "upcoming" walks
+    off the show you are standing in. Tier 2 above tier 3 because the Monday
+    after a show is when people compare what they saw. It also buys a
+    partially-published next show two weeks to fill in: "published" can only
+    mean "we have synced events for it", which a 12-event schedule satisfies.
+
+    `with_data` gates EVERY tier, not just the upcoming one - a show the bot
+    cannot render must never be selectable.
+
+    Each show's dates are judged in ITS OWN timezone, the same conversion
+    Show.is_running performs. Judging in UTC reports a Seattle show over a day
+    early and a Melbourne one a day late.
+    """
+    if now.tzinfo is None:
+        raise ValueError("active_show() needs a timezone-aware datetime")
+
+    running: list[Show] = []
+    recent: list[Show] = []
+    upcoming: list[Show] = []
+    past: list[Show] = []
+
+    for show in shows:
+        if show.slug not in with_data:
+            continue
+        today = now.astimezone(ZoneInfo(show.timezone)).date()
+        if show.start_date <= today <= show.end_date:
+            running.append(show)
+        elif today < show.start_date:
+            upcoming.append(show)
+        elif today <= show.end_date + timedelta(days=grace_days):
+            recent.append(show)
+        else:
+            past.append(show)
+
+    if running:
+        return _earliest_start(running)
+    if recent:
+        return _latest_end(recent)
+    if upcoming:
+        return _earliest_start(upcoming)
+    if past:
+        return _latest_end(past)
+    return None

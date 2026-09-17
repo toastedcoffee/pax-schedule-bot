@@ -159,3 +159,22 @@ def test_day_error_is_a_value_error():
     """Callers that already catch ValueError keep working."""
     assert issubclass(DayError, ValueError)
 
+
+def test_handover_grace_days_defaults_when_absent(tmp_path):
+    path = tmp_path / "shows.toml"
+    path.write_text(
+        '[shows.west]\nname="W"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/Los_Angeles"\nstart_date=2026-09-04\n'
+        'end_date=2026-09-07\n', encoding="utf-8")
+    assert load_config(path).handover_grace_days == 14
+
+
+def test_handover_grace_days_is_read_from_defaults(tmp_path):
+    path = tmp_path / "shows.toml"
+    path.write_text(
+        '[defaults]\nhandover_grace_days = 3\n'
+        '[shows.west]\nname="W"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/Los_Angeles"\nstart_date=2026-09-04\n'
+        'end_date=2026-09-07\n', encoding="utf-8")
+    assert load_config(path).handover_grace_days == 3
+
