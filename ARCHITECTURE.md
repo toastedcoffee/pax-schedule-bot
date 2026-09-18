@@ -11,6 +11,13 @@ paxbot has six layers. Each knows as little as possible about the others.
 | Bot | `paxbot/bot/` | Discord, views, store | `httpx` |
 | Composition root | `paxbot/app.py` | everything | — |
 
+Two modules inside those layers carry the multi-show rules:
+
+| Module | Layer | Holds |
+|---|---|---|
+| `paxbot/sync/policy.py` | Sync | `shows_to_sync`: which shows this tick fetches. Pure, no I/O |
+| `paxbot/store/guilds.py` | Store | Which shows each Discord server follows (`guild_shows`); no rows means every show |
+
 `httpx` is the boundary that actually matters: it is what keeps fetching
 confined to `sync/`, and that rule stands as written. `bot/` importing
 `sqlite3` and reading the store directly (`paxbot/bot/commands.py` and
@@ -59,6 +66,16 @@ dataclasses into embeds and is equally pure, so Discord's silent limits (25 sele
 options, 6000 embed characters, 100-character `custom_id`s) are ordinary unit tests
 instead of production surprises.
 
+Show resolution is a pure function for the same reason. `active_show` in
+`views.py` takes the candidate shows, the slugs that have synced events, the
+current time and the grace window, and returns one `Show` or `None` (see ADR
+0006). It never reads the database or the system clock itself, so every tier
+and every timezone edge is tested with three `Show` objects and a fake clock,
+not a database. `sync/policy.py`'s `shows_to_sync` follows the same pattern for
+the sync loop's question - which shows are due - and lives in `sync/` rather
+than `views.py` because that question belongs to the sync loop, not to
+rendering.
+
 ## Data source
 
 The schedule comes from a single LEAP JSON endpoint:
@@ -69,7 +86,8 @@ One request returns every event for a show. The `paxsite.com` pages are client-r
 and contain no event data, so there is no HTML parsing anywhere in this project.
 
 Per-show API keys live in `shows.toml`; `scripts/find_api_key.py` recovers one if it
-rotates. Adding another PAX is a block in that file, not code.
+rotates. Adding another PAX is a block in that file, not code. The bot cannot discover a
+show on its own: a schedule has no API key until it is published.
 
 ### Two upstream quirks worth knowing
 

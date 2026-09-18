@@ -20,7 +20,6 @@ services:
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN:-}
       PAXBOT_GUILD_ID: ${PAXBOT_GUILD_ID:-}
-      PAXBOT_SHOW: ${PAXBOT_SHOW:-west}
       PAXBOT_LOG_LEVEL: ${PAXBOT_LOG_LEVEL:-INFO}
       PAXBOT_DB: /data/paxbot.db
       PAXBOT_CONFIG: /app/shows.toml

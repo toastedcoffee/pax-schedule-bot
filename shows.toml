@@ -1,5 +1,7 @@
 [defaults]
 drop_in_threshold_minutes = 240
+# How long a show that has just ended keeps precedence over the next one.
+handover_grace_days = 14
 
 [shows.west]
 name       = "PAX West 2026"
@@ -8,3 +10,11 @@ api_key    = "b0c56126-dbbd-4cee-a027-42f7b2c2a2d0"
 timezone   = "America/Los_Angeles"
 start_date = 2026-09-04
 end_date   = 2026-09-07
+
+[shows.east]
+name       = "PAX East 2026"
+base_url   = "https://east.paxsite.com"
+api_key    = "bf9cc1a9-09d0-4bf7-9c13-96d85fe03f61"
+timezone   = "America/New_York"
+start_date = 2026-03-26
+end_date   = 2026-03-29
