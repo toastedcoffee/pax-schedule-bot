@@ -233,7 +233,7 @@ Add a block to `shows.toml`:
     start_date = 2027-04-21
     end_date   = 2027-04-25
 
-Recover the API key with `python scripts/find_api_key.py east`. The key only
+Recover the API key with `python scripts/find_api_key.py east-2027`. The key only
 exists once ReedPop has published that show's schedule, which is why the bot
 cannot find new shows by itself: adding one is always this edit plus a restart.
 A finished show's key keeps working, so a past show can be added too and its
@@ -251,9 +251,12 @@ this year's ~713 events look cancelled the moment the new one syncs in under
 the same name - permanently, since events are never deleted, only marked
 cancelled.
 
-Instead, give each year its own slug:
+The shipped `[shows.west]` and `[shows.east]` blocks are the 2026 shows. Never
+rename or repoint them: stored events and every user's saved schedule are keyed
+by slug, so renaming `west` to `west-2026` would orphan all of them. Later
+years get year-suffixed slugs, per ADR 0005:
 
-    [shows.west-2026]
+    [shows.west]
     name       = "PAX West 2026"
     ...
 
@@ -266,7 +269,7 @@ Instead, give each year its own slug:
     end_date   = 2027-09-06
 
 `paxbot sync --show west-2027` and `paxbot list --show west-2027 ...` then
-address the new year, while `west-2026`'s events stay in the store and
+address the new year, while `west`'s 2026 events stay in the store and
 addressable under their own slug. See
 `docs/adr/0005-one-show-slug-per-year.md`.
 

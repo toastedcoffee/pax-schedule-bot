@@ -57,14 +57,14 @@ otherwise ignores it.
 - **"Running" beats "upcoming"** because, during a show, the soonest upcoming
   show is a different one months away. A literal "next show" rule would move
   off the show people are standing in.
-- **The grace window** keeps a just-finished show active for two weeks. The
-  days after a show are when people compare what they saw and look back at
-  their saved schedule; without it the bot would switch away the morning after
-  closing.
+- **The grace window** keeps a just-finished show active for
+  `handover_grace_days` (two weeks by default). The days after a show are when
+  people compare what they saw and look back at their saved schedule; without
+  it the bot would switch away the morning after closing.
 - The grace window also gives the next show time to fill in. ReedPop publishes
   schedules progressively, and "published" can only mean "we have synced
-  events for it" - a schedule with a dozen events meets that test. Two weeks of
-  grace keeps a thin early schedule from replacing a full one straight away.
+  events for it" - a schedule with a dozen events meets that test. The grace
+  window keeps a thin early schedule from replacing a full one straight away.
 - A server that runs `/setup` and picks specific shows will not follow a show
   added later until an admin revisits `/setup`. A server that never runs it, or
   presses **Follow every show**, picks up new shows automatically.
