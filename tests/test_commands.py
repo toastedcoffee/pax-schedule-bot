@@ -169,3 +169,17 @@ def test_day_menu_does_not_resolve_the_active_show_when_it_is_not_needed():
         raise AssertionError("fallback called")
     assert commands.show_for_day_menu("east", DAY_MENU_CONFIG,
                                       explode).slug == "east"
+
+
+def test_saved_show_menu_skips_slugs_no_longer_in_config():
+    """A save for a show since removed from shows.toml would be offered and
+    then refused as "not a show this bot knows about"."""
+    choices = commands.saved_show_choices(("east", "gone", "west"),
+                                          DAY_MENU_CONFIG, "")
+    assert [c.value for c in choices] == ["east", "west"]
+    assert [c.name for c in choices] == ["EAST", "WEST"]
+
+
+def test_saved_show_menu_narrows_by_name_or_slug():
+    assert [c.value for c in commands.saved_show_choices(
+        ("east", "west"), DAY_MENU_CONFIG, " We")] == ["west"]

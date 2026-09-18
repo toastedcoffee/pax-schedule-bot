@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -67,7 +67,8 @@ class BotDeps:
         install before its first sync. Callers must say so rather than
         failing silently.
         """
-        slugs = followed_slugs(self.conn, str(guild_id)) if guild_id else None
+        slugs = (followed_slugs(self.conn, str(guild_id))
+                 if guild_id is not None else None)
         candidates = [show for show in self.config.shows.values()
                       if slugs is None or show.slug in slugs]
         return active_show(candidates, shows_with_data(self.conn), self.now(),
@@ -88,6 +89,24 @@ def show_for_day_menu(requested: str | None, config: Config,
     if requested and requested in config.shows:
         return config.shows[requested]
     return fallback()
+
+
+def saved_show_choices(slugs: Sequence[str], config: Config,
+                       current: str) -> list[app_commands.Choice]:
+    """The /myschedule show: menu: saved shows the config still knows.
+
+    A save for a show since removed from shows.toml stays in the database, but
+    offering it only leads to "not a show this bot knows about" on submit.
+    """
+    needle = current.strip().casefold()
+    choices = []
+    for slug in slugs:
+        known = config.shows.get(slug)
+        if known is None:
+            continue
+        if needle in known.name.casefold() or needle in slug:
+            choices.append(app_commands.Choice(name=known.name, value=slug))
+    return choices[:AUTOCOMPLETE_LIMIT]
 
 
 DAY_HELP = "A show day: Saturday, Sat, or 2026-09-05"
@@ -312,15 +331,9 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         earlier saves.
         """
         try:
-            slugs = saved_show_slugs(deps.conn, str(interaction.user.id))
-            needle = current.strip().casefold()
-            choices = []
-            for slug in slugs:
-                known = deps.config.shows.get(slug)
-                label = known.name if known else slug
-                if needle in label.casefold() or needle in slug:
-                    choices.append(app_commands.Choice(name=label, value=slug))
-            return choices[:AUTOCOMPLETE_LIMIT]
+            return saved_show_choices(
+                saved_show_slugs(deps.conn, str(interaction.user.id)),
+                deps.config, current)
         except Exception:
             log.exception("myschedule show autocomplete failed")
             return []
