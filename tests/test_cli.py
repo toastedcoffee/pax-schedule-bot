@@ -242,3 +242,55 @@ def test_sync_all_syncs_every_configured_show(tmp_path, monkeypatch, capsys):
                      "--db", str(tmp_path / "db.sqlite")])
     assert code == 0
     assert sorted(synced) == ["east", "west"]
+
+
+def test_sync_all_works_without_a_west_show(tmp_path, monkeypatch):
+    """--show defaults to "west", but --all must not require that show to
+    exist. This phase retired PAXBOT_SHOW precisely so an instance can
+    serve any set of shows."""
+    synced = []
+
+    def fake_run_sync(conn, show, fetcher=None):
+        synced.append(show.slug)
+        return cli.SyncReport(show_slug=show.slug)
+
+    monkeypatch.setattr(cli, "run_sync", fake_run_sync)
+    config = tmp_path / "shows.toml"
+    config.write_text(
+        '[shows.east]\nname="E"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/New_York"\nstart_date=2026-03-26\nend_date=2026-03-29\n'
+        '[shows.south]\nname="S"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/Chicago"\nstart_date=2026-01-22\nend_date=2026-01-25\n',
+        encoding="utf-8")
+    code = cli.main(["sync", "--all", "--config", str(config),
+                     "--db", str(tmp_path / "db.sqlite")])
+    assert code == 0
+    assert sorted(synced) == ["east", "south"]
+
+
+def test_sync_all_isolates_one_shows_failure_from_the_other(tmp_path, monkeypatch, capsys):
+    """The bot's own sync loop isolates one show's failure from the others;
+    --all must do the same instead of stopping partway through."""
+    synced = []
+
+    def fake_run_sync(conn, show, fetcher=None):
+        synced.append(show.slug)
+        if show.slug == "east":
+            raise RuntimeError("boom")
+        return cli.SyncReport(show_slug=show.slug)
+
+    monkeypatch.setattr(cli, "run_sync", fake_run_sync)
+    config = tmp_path / "shows.toml"
+    config.write_text(
+        '[shows.west]\nname="W"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/Los_Angeles"\nstart_date=2026-09-04\nend_date=2026-09-07\n'
+        '[shows.east]\nname="E"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/New_York"\nstart_date=2026-03-26\nend_date=2026-03-29\n',
+        encoding="utf-8")
+    code = cli.main(["sync", "--all", "--config", str(config),
+                     "--db", str(tmp_path / "db.sqlite")])
+    err = capsys.readouterr().err
+
+    assert sorted(synced) == ["east", "west"]
+    assert "east" in err
+    assert code == 1

@@ -89,11 +89,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"failed to load config {config_path}: {exc}", file=sys.stderr)
         return 2
 
-    try:
-        show = config.show(args.show)
-    except KeyError as exc:
-        print(str(exc).strip("\"'"), file=sys.stderr)
-        return 2
+    # --all syncs every show in the config, so it must not require the
+    # --show default ("west") to exist - retiring PAXBOT_SHOW means an
+    # instance can serve any set of shows, including ones with no "west".
+    sync_all = args.command == "sync" and getattr(args, "all", False)
+
+    show = None
+    if not sync_all:
+        try:
+            show = config.show(args.show)
+        except KeyError as exc:
+            print(str(exc).strip("\"'"), file=sys.stderr)
+            return 2
 
     # Validate all arguments before connect() - connect() creates the db file
     # as a side effect, and a usage error must not leave one behind.
@@ -111,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cannot open database: {exc}", file=sys.stderr)
         return 1
     try:
-        if args.command == "sync" and getattr(args, "all", False):
+        if sync_all:
             return _cmd_sync_all(conn, config)
         if args.command == "sync":
             return _cmd_sync(conn, show)
@@ -146,7 +153,10 @@ def _cmd_sync_all(conn, config) -> int:
     for slug in sorted(config.shows):
         show = config.shows[slug]
         try:
-            report = run_sync(conn, show)
+            # Pass the fetcher explicitly, same reason as _cmd_sync: run_sync's
+            # own default is bound in its module, so tests that patch
+            # paxbot.cli.fetch_schedules would otherwise hit the network.
+            report = run_sync(conn, show, fetcher=fetch_schedules)
             print(f"{show.slug}: added {report.added}, changed {report.changed}, "
                   f"cancelled {report.removed}")
         except Exception as exc:
