@@ -372,8 +372,6 @@ def saved_embed(state: SavedState, threshold_minutes: int) -> discord.Embed:
 
 # ---- /setup -----------------------------------------------------------
 
-# Discord caps a select at 25 options and truncates past that silently.
-MAX_SHOW_OPTIONS = 25
 # A select option's description is capped at 100 characters too - the same
 # number as SELECT_LABEL_MAX above, but a different limit.
 SELECT_DESCRIPTION_MAX = 100
@@ -389,7 +387,7 @@ def show_options(shows: Sequence[Show], followed: AbstractSet[str],
     """
     ordered = sorted(shows, key=lambda s: (s.start_date, s.slug))
     options = []
-    for show in ordered[:MAX_SHOW_OPTIONS]:
+    for show in ordered[:SELECT_OPTION_MAX]:
         note = "" if show.slug in with_data else " — no schedule data yet"
         span = f"{show.start_date:%b %d} – {show.end_date:%b %d, %Y}"
         options.append(discord.SelectOption(

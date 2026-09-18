@@ -72,7 +72,7 @@ class SetupView(discord.ui.View):
             custom_id=ids.encode(ids.SEL_SHOWS),
             placeholder="Shows this server follows",
             min_values=1,
-            max_values=min(len(options), render.MAX_SHOW_OPTIONS),
+            max_values=min(len(options), render.SELECT_OPTION_MAX),
             options=options,
             row=0,
         )

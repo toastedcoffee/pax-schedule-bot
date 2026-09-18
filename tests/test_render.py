@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from paxbot.bot import ids, render
-from paxbot.bot.render import MAX_SHOW_OPTIONS, setup_embed, show_options
+from paxbot.bot.render import SELECT_OPTION_MAX, setup_embed, show_options
 from paxbot.config import Show
 from paxbot.store.db import transaction
 from paxbot.store.events import upsert_events
@@ -339,7 +339,7 @@ def test_show_options_never_exceeds_discords_option_cap():
                          date(2026, 1, 2) + timedelta(days=i))
              for i in range(40)]
     options = show_options(shows, frozenset(), frozenset())
-    assert len(options) == MAX_SHOW_OPTIONS == 25
+    assert len(options) == SELECT_OPTION_MAX == 25
 
 
 def test_show_options_labels_and_descriptions_fit_discords_limits():
