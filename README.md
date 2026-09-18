@@ -188,6 +188,12 @@ dependency, so set the variables in your shell:
 **Upgrading:** `PAXBOT_SHOW` has been removed. If it is still set, the bot logs a
 warning at startup and ignores it; delete it from your `.env` or stack.
 
+This version also upgrades the database to schema v3 on first start, and the
+previous image refuses a v3 database (`SchemaVersionError`). Before upgrading,
+note the image you are running now (`docker compose images`, or its
+`sha-<commit>` tag), then stop the bot and copy `paxbot.db`. Rolling back is
+then deliberate: pin that tag in `PAXBOT_TAG` and restore the copy.
+
 ## Shows
 
 `shows.toml` lists every show this instance serves, one `[shows.<slug>]` block
