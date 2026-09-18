@@ -16,7 +16,7 @@ from paxbot.sources.leap import LeapError, fetch_schedules
 from paxbot.store.db import SchemaVersionError, connect
 from paxbot.store.events import events_for_day
 from paxbot.sync.diff import GuardRailError
-from paxbot.sync.runner import SyncReport, run_sync
+from paxbot.sync.runner import run_sync
 
 DEFAULT_DB = "paxbot.db"
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "shows.toml"
@@ -135,12 +135,19 @@ def _cmd_sync(conn, show) -> int:
     except (LeapError, GuardRailError, sqlite3.Error) as exc:
         print(f"sync failed: {exc}", file=sys.stderr)
         return 1
-    print(
-        f"{show.slug}: added {report.added}, changed {report.changed}, "
-        f"cancelled {report.removed}, unchanged {report.unchanged}, "
-        f"skipped {report.skipped}"
-    )
+    print(_format_report(report))
     return 0
+
+
+def _format_report(report) -> str:
+    """One line per synced show, shared by `sync` and `sync --all`.
+
+    Shared so the two cannot drift: a skipped count that only one of them
+    prints hides parse problems from whoever runs the other.
+    """
+    return (f"{report.show_slug}: added {report.added}, "
+            f"changed {report.changed}, cancelled {report.removed}, "
+            f"unchanged {report.unchanged}, skipped {report.skipped}")
 
 
 def _cmd_sync_all(conn, config) -> int:
@@ -157,8 +164,7 @@ def _cmd_sync_all(conn, config) -> int:
             # own default is bound in its module, so tests that patch
             # paxbot.cli.fetch_schedules would otherwise hit the network.
             report = run_sync(conn, show, fetcher=fetch_schedules)
-            print(f"{show.slug}: added {report.added}, changed {report.changed}, "
-                  f"cancelled {report.removed}")
+            print(_format_report(report))
         except Exception as exc:
             failed.append(slug)
             print(f"{show.slug}: FAILED - {exc}", file=sys.stderr)

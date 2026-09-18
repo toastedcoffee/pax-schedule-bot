@@ -6,6 +6,7 @@ import pytest
 from paxbot import cli
 from paxbot.cli import _ascii, main
 from paxbot.store.db import SCHEMA_VERSION, connect
+from paxbot.sync.runner import SyncReport
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -228,7 +229,8 @@ def test_sync_all_syncs_every_configured_show(tmp_path, monkeypatch, capsys):
 
     def fake_run_sync(conn, show, fetcher=None):
         synced.append(show.slug)
-        return cli.SyncReport(show_slug=show.slug)
+        return SyncReport(show_slug=show.slug, added=1, changed=2, removed=3,
+                          unchanged=4, skipped=5)
 
     monkeypatch.setattr(cli, "run_sync", fake_run_sync)
     config = tmp_path / "shows.toml"
@@ -242,6 +244,10 @@ def test_sync_all_syncs_every_configured_show(tmp_path, monkeypatch, capsys):
                      "--db", str(tmp_path / "db.sqlite")])
     assert code == 0
     assert sorted(synced) == ["east", "west"]
+    # The same line as a single-show sync: a skipped count reported by only
+    # one of the two commands hides parse problems from whoever uses --all.
+    out = capsys.readouterr().out
+    assert "west: added 1, changed 2, cancelled 3, unchanged 4, skipped 5" in out
 
 
 def test_sync_all_works_without_a_west_show(tmp_path, monkeypatch):
@@ -252,7 +258,7 @@ def test_sync_all_works_without_a_west_show(tmp_path, monkeypatch):
 
     def fake_run_sync(conn, show, fetcher=None):
         synced.append(show.slug)
-        return cli.SyncReport(show_slug=show.slug)
+        return SyncReport(show_slug=show.slug)
 
     monkeypatch.setattr(cli, "run_sync", fake_run_sync)
     config = tmp_path / "shows.toml"
@@ -277,7 +283,7 @@ def test_sync_all_isolates_one_shows_failure_from_the_other(tmp_path, monkeypatc
         synced.append(show.slug)
         if show.slug == "east":
             raise RuntimeError("boom")
-        return cli.SyncReport(show_slug=show.slug)
+        return SyncReport(show_slug=show.slug)
 
     monkeypatch.setattr(cli, "run_sync", fake_run_sync)
     config = tmp_path / "shows.toml"
