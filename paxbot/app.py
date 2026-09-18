@@ -11,6 +11,7 @@ import logging
 import os
 import sqlite3
 import sys
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import discord
@@ -19,10 +20,10 @@ from discord.ext import tasks
 from paxbot.bot.client import PaxClient
 from paxbot.bot.commands import BotDeps
 from paxbot.cli import _resolve_config, _resolve_db
-from paxbot.config import load_config
+from paxbot.config import Show, load_config
 from paxbot.store.db import SchemaVersionError, connect
 from paxbot.sync.policy import shows_to_sync
-from paxbot.sync.runner import SyncReport, run_sync
+from paxbot.sync.runner import run_sync
 
 log = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ def _warn_if_show_env_set() -> None:
             os.environ["PAXBOT_SHOW"].strip())
 
 
-def _sync_due(db_path: str, shows) -> None:
+def _sync_due(db_path: str, shows: Sequence[Show]) -> None:
     """Sync every due show on ONE connection, in a worker thread.
 
     sqlite3 connections default to check_same_thread=True, so reusing the
