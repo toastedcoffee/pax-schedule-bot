@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from paxbot import cli
 from paxbot.cli import _ascii, main
 from paxbot.store.db import SCHEMA_VERSION, connect
 
@@ -218,3 +219,26 @@ def test_packaged_config_is_the_last_resort_fallback(db, tmp_path, monkeypatch, 
     monkeypatch.chdir(empty_dir)
     assert main(["sync", "--db", db]) == 0
     assert "west: added" in capsys.readouterr().out
+
+
+def test_sync_all_syncs_every_configured_show(tmp_path, monkeypatch, capsys):
+    """One flag, because a multi-show instance otherwise needs one command per
+    show and will quietly miss the one that was just added."""
+    synced = []
+
+    def fake_run_sync(conn, show, fetcher=None):
+        synced.append(show.slug)
+        return cli.SyncReport(show_slug=show.slug)
+
+    monkeypatch.setattr(cli, "run_sync", fake_run_sync)
+    config = tmp_path / "shows.toml"
+    config.write_text(
+        '[shows.west]\nname="W"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/Los_Angeles"\nstart_date=2026-09-04\nend_date=2026-09-07\n'
+        '[shows.east]\nname="E"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/New_York"\nstart_date=2026-03-26\nend_date=2026-03-29\n',
+        encoding="utf-8")
+    code = cli.main(["sync", "--all", "--config", str(config),
+                     "--db", str(tmp_path / "db.sqlite")])
+    assert code == 0
+    assert sorted(synced) == ["east", "west"]

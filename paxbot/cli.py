@@ -16,7 +16,7 @@ from paxbot.sources.leap import LeapError, fetch_schedules
 from paxbot.store.db import SchemaVersionError, connect
 from paxbot.store.events import events_for_day
 from paxbot.sync.diff import GuardRailError
-from paxbot.sync.runner import run_sync
+from paxbot.sync.runner import SyncReport, run_sync
 
 DEFAULT_DB = "paxbot.db"
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "shows.toml"
@@ -56,6 +56,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sync = sub.add_parser("sync", help="fetch the schedule and update the store")
     sync.add_argument("--show", default="west")
+    sync.add_argument("--all", action="store_true",
+                      help="sync every show in the config, not just one")
     sync.add_argument("--db", default=None)
     sync.add_argument("--config", default=None)
 
@@ -109,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cannot open database: {exc}", file=sys.stderr)
         return 1
     try:
+        if args.command == "sync" and getattr(args, "all", False):
+            return _cmd_sync_all(conn, config)
         if args.command == "sync":
             return _cmd_sync(conn, show)
         return _cmd_list(conn, show, day, args.category, config.drop_in_threshold_minutes)
@@ -130,6 +134,25 @@ def _cmd_sync(conn, show) -> int:
         f"skipped {report.skipped}"
     )
     return 0
+
+
+def _cmd_sync_all(conn, config) -> int:
+    """Sync every configured show, reporting each, failing only at the end.
+
+    One broken show must not stop the others - the same isolation the bot's
+    own loop applies.
+    """
+    failed = []
+    for slug in sorted(config.shows):
+        show = config.shows[slug]
+        try:
+            report = run_sync(conn, show)
+            print(f"{show.slug}: added {report.added}, changed {report.changed}, "
+                  f"cancelled {report.removed}")
+        except Exception as exc:
+            failed.append(slug)
+            print(f"{show.slug}: FAILED - {exc}", file=sys.stderr)
+    return 1 if failed else 0
 
 
 def _cmd_list(conn, show, day: date, category: str | None, threshold: int) -> int:
