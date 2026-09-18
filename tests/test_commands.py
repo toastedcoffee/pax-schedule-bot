@@ -18,7 +18,7 @@ from paxbot.bot.commands import BotDeps
 from paxbot.config import Config, Show, load_config
 from paxbot.store.db import transaction
 from paxbot.store.events import upsert_events
-from paxbot.store.guilds import set_followed
+from paxbot.store.guilds import followed_slugs, set_followed
 from tests.conftest import make_event
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -106,15 +106,27 @@ def test_resolve_show_honours_a_guilds_follow_set(conn):
 
 
 def test_a_followed_slug_no_longer_in_config_is_ignored(conn):
-    show = Show(slug="west", name="W", base_url="https://e.invalid", api_key="k",
+    west = Show(slug="west", name="W", base_url="https://e.invalid", api_key="k",
                 timezone="America/Los_Angeles",
                 start_date=date(2026, 9, 4), end_date=date(2026, 9, 7))
+    # Configured, with data, and NOT followed. On the pinned date it is the
+    # upcoming show and would beat the long-ended west, so this only passes
+    # while the follow set is actually applied.
+    east = Show(slug="east", name="E", base_url="https://e.invalid", api_key="k",
+                timezone="America/New_York",
+                start_date=date(2027, 3, 25), end_date=date(2027, 3, 28))
     with transaction(conn):
-        upsert_events(conn, [make_event(gt_id="1", show_slug="west")])
+        upsert_events(conn, [make_event(gt_id="1", show_slug="west"),
+                             make_event(gt_id="2", show_slug="east")])
     set_followed(conn, "42", ["west", "gone"], "1", datetime(2026, 9, 16, tzinfo=UTC))
-    deps = BotDeps(conn=conn, config=Config(shows={"west": show},
+    deps = BotDeps(conn=conn, config=Config(shows={"west": west, "east": east},
                                             drop_in_threshold_minutes=240))
+    # Pinned rather than the wall clock, so the tiers are known.
+    deps.now = lambda: datetime(2026, 10, 1, 12, tzinfo=UTC)
     assert deps.resolve_show(42).slug == "west"
+    # Ignored, not deleted: the stale row survives until an admin re-runs
+    # /setup, so restoring the show to shows.toml restores the follow.
+    assert followed_slugs(conn, "42") == ("gone", "west")
 
 
 def _fixed_show(slug, start, end):

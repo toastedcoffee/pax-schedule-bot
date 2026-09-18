@@ -423,6 +423,17 @@ def test_a_show_with_no_data_is_never_chosen_when_upcoming():
     assert active_show([WEST, AUS], frozenset({"west"}), at(2026, 9, 22), 14) is WEST
 
 
+def test_a_show_with_no_data_is_never_chosen_when_recently_ended():
+    """West is inside its grace window but has no data, so the upcoming Aus
+    wins rather than a show the bot cannot render."""
+    assert active_show([WEST, AUS], frozenset({"aus"}), at(2026, 9, 8), 14) is AUS
+
+
+def test_a_show_with_no_data_is_never_chosen_when_past():
+    """Both shows are past; West ended later but has no data, so East wins."""
+    assert active_show([WEST, EAST], frozenset({"east"}), at(2026, 9, 22), 14) is EAST
+
+
 def test_no_candidates_returns_none():
     assert active_show([WEST], frozenset(), at(2026, 9, 5), 14) is None
     assert active_show([], ALL, at(2026, 9, 5), 14) is None
@@ -443,11 +454,20 @@ def test_a_naive_now_is_refused():
 def test_the_boundary_is_evaluated_in_the_shows_own_timezone():
     """2026-09-08 06:00 UTC is still Sep 7 in Seattle - West is still RUNNING.
 
-    Judging this in UTC would report the show over a day early.
+    Judging this in UTC would report the show over a day early. Aus competes
+    so the tier decides the answer: judged in UTC, West would be past and the
+    upcoming Aus would win. With West alone it is returned from any tier.
     """
-    assert active_show([WEST], ALL, datetime(2026, 9, 8, 6, tzinfo=UTC), 0) is WEST
+    assert active_show([WEST, AUS], ALL,
+                       datetime(2026, 9, 8, 6, tzinfo=UTC), 0) is WEST
 
 
 def test_a_melbourne_show_is_judged_on_its_own_side_of_the_dateline():
-    """2026-10-08 20:00 UTC is already Oct 9 in Melbourne - Aus is RUNNING."""
-    assert active_show([AUS], ALL, datetime(2026, 10, 8, 20, tzinfo=UTC), 14) is AUS
+    """2026-10-08 20:00 UTC is already Oct 9 in Melbourne - Aus is RUNNING.
+
+    West competes, still inside a 60-day grace window, so the tier decides the
+    answer: judged in UTC, Aus would be upcoming and the recently-ended West
+    would beat it.
+    """
+    assert active_show([WEST, AUS], ALL,
+                       datetime(2026, 10, 8, 20, tzinfo=UTC), 60) is AUS

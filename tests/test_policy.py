@@ -69,9 +69,11 @@ def test_an_off_season_show_waits_four_hours_not_one():
 
 
 def test_a_due_show_and_a_not_due_show_in_the_same_tick():
-    now = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    """Both shows are eligible, so recency alone decides: west is running and
+    was synced 10 minutes ago (inside its hour), aus is upcoming and was
+    synced 5 hours ago (past its four)."""
+    now = datetime(2026, 9, 5, 18, tzinfo=UTC)
     last = {"aus": now - timedelta(hours=5), "west": now - timedelta(minutes=10)}
-    # west has ended and was synced recently; aus is upcoming and overdue.
     assert slugs(shows_to_sync([WEST, AUS], last, now, IN_SHOW, OFF_SEASON)) == ["aus"]
 
 
