@@ -1,8 +1,17 @@
 """The /setup panel: which shows this server follows.
 
 Separate from panel.py because that module is the /schedule control panel and
-is already at its five-action-row ceiling; this shares nothing with it but the
-timeout constant and the apology helper.
+is already at its five-action-row ceiling. It imports only the timeout
+constant and the apology helper from there, but it deliberately mirrors two of
+SchedulePanel's patterns, so a fix to either belongs in both:
+
+- _render's all-or-nothing rollback of the children on a failed edit;
+- the anchor. The expiry edit goes through the newest interaction whose
+  response IS this panel, never through the /setup command's token. Every
+  token dies 15 minutes after its own creation, while the 840s timeout counts
+  from the last click, so on any panel clicked after about minute 2 an edit
+  through the command's token fails - and the panel is left showing
+  live-looking controls that answer "This interaction failed".
 """
 from __future__ import annotations
 
@@ -32,7 +41,10 @@ class SetupView(discord.ui.View):
         self.deps = deps
         self.guild_id = guild_id
         self.user_id = user_id
-        self.message: discord.Message | None = None
+        # The /setup command first, then each click answered by editing the
+        # panel in place. on_timeout edits through this; see the module
+        # docstring for why the command's token alone would not last.
+        self.anchor: discord.Interaction | None = None
         self.rebuild()
 
     # ---- state -----------------------------------------------------------
@@ -104,7 +116,12 @@ class SetupView(discord.ui.View):
             # Re-raised so on_error still answers the interaction; swallowing
             # it here would leave the click unanswered and Discord would show
             # a bare "This interaction failed" over a write that succeeded.
+            # The anchor is not touched either: a failed click does not own
+            # the message, so everything stays as it was.
             raise
+        # Only a click answered in place owns the message, and its token -
+        # good for 15 minutes from now - is the one the expiry edit must use.
+        self.anchor = interaction
 
     # ---- callbacks -------------------------------------------------------
     async def _on_select(self, interaction: discord.Interaction) -> None:
@@ -128,12 +145,15 @@ class SetupView(discord.ui.View):
     async def on_timeout(self) -> None:
         for child in self.children:
             child.disabled = True
-        if self.message is None:
+        if self.anchor is None:
             return
         try:
-            await self.message.edit(
+            await self.anchor.edit_original_response(
                 content="This panel expired — run `/setup` again.", view=self)
         except discord.HTTPException:
+            # The anchor lags the last click only when that click failed, or
+            # when a restart orphaned the panel. Then its token may be dead
+            # and there is no surface left.
             log.debug("setup panel timeout edit failed", exc_info=True)
 
     async def on_error(self, interaction: discord.Interaction,

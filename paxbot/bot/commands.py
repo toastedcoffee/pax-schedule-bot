@@ -274,11 +274,10 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         view = SetupView(deps, interaction.guild_id, interaction.user.id)
         await interaction.response.send_message(
             embed=view.embed(), view=view, ephemeral=True)
-        try:
-            view.message = await interaction.original_response()
-        except discord.HTTPException:
-            log.warning("could not capture setup panel; timeout will be silent",
-                        exc_info=True)
+        # The command's response is the panel, so the command is its first
+        # anchor. The view replaces it with each click it answers in place;
+        # this token alone would die 15 minutes after /setup.
+        view.anchor = interaction
 
 
 def _show_start(show: Show) -> datetime:
