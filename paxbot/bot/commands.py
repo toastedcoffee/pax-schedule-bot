@@ -1,4 +1,4 @@
-"""The three slash commands. Thin: they build a view model and render it.
+"""The four slash commands. Thin: they build a view model and render it.
 
 No fetching, no parsing, no HTTP - see ARCHITECTURE.md. Commands read the
 store; the sync job is the only thing that talks to the network.

@@ -189,10 +189,13 @@ dependency, so set the variables in your shell:
 warning at startup and ignores it; delete it from your `.env` or stack.
 
 This version also upgrades the database to schema v3 on first start, and the
-previous image refuses a v3 database (`SchemaVersionError`). Before upgrading,
-note the image you are running now (`docker compose images`, or its
-`sha-<commit>` tag), then stop the bot and copy `paxbot.db`. Rolling back is
-then deliberate: pin that tag in `PAXBOT_TAG` and restore the copy.
+previous image refuses a v3 database (`SchemaVersionError`). To roll back, you
+need the image's `sha-<commit>` tag from before the upgrade. The image publishes
+a `sha-<commit>` tag for every commit on `main` — for example, `sha-d6b1424` —
+in addition to `latest`. Identify the tag you want to roll back to (the commit
+`main` pointed at before the upgrade), then pin it in `PAXBOT_TAG`. Stop the bot,
+copy `paxbot.db` from the folder set by `PAXBOT_DATA_DIR`, and redeploy with the
+pinned tag to restore your database and roll back.
 
 ## Shows
 
