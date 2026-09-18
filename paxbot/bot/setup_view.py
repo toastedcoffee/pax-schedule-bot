@@ -9,7 +9,7 @@ SchedulePanel's patterns, so a fix to either belongs in both:
 - the anchor. The expiry edit goes through the newest interaction whose
   response IS this panel, never through the /setup command's token. Every
   token dies 15 minutes after its own creation, while the 840s timeout counts
-  from the last click, so on any panel clicked after about minute 2 an edit
+  from the last click, so on any panel clicked after about minute 1 an edit
   through the command's token fails - and the panel is left showing
   live-looking controls that answer "This interaction failed".
 """

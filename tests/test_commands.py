@@ -1,7 +1,9 @@
 """Guards for the command layer.
 
 paxbot/bot/commands.py has no behavioural tests by project decision (spec §10).
-What is here pins facts about the command SURFACE that break silently in
+That decision covers the command bodies, which need a Discord gateway to drive;
+BotDeps and the pure helpers beside it are ordinary code and are tested here.
+Beyond those, what is here pins facts about the command SURFACE that break silently in
 Discord rather than loudly in Python: two constants that encode hard Discord
 limits, and the shape of what gets registered.
 """

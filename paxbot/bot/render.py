@@ -31,6 +31,7 @@ FOOTER_MAX = 400
 MORE_SUFFIX_MAX = 16
 EMBED_DESCRIPTION_MAX = 4096
 EMBED_FIELD_VALUE_MAX = 1024
+# Discord's cap of 25 options per select menu; every *_options builder slices to it.
 SELECT_OPTION_MAX = 25
 SELECT_LABEL_MAX = 100
 AUTOCOMPLETE_LABEL_MAX = 100
