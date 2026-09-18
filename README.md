@@ -189,13 +189,21 @@ dependency, so set the variables in your shell:
 warning at startup and ignores it; delete it from your `.env` or stack.
 
 This version also upgrades the database to schema v3 on first start, and the
-previous image refuses a v3 database (`SchemaVersionError`). To roll back, you
-need the image's `sha-<commit>` tag from before the upgrade. The image publishes
-a `sha-<commit>` tag for every commit on `main` — for example, `sha-d6b1424` —
-in addition to `latest`. Identify the tag you want to roll back to (the commit
-`main` pointed at before the upgrade), then pin it in `PAXBOT_TAG`. Stop the bot,
-copy `paxbot.db` from the folder set by `PAXBOT_DATA_DIR`, and redeploy with the
-pinned tag to restore your database and roll back.
+previous image refuses a v3 database (`SchemaVersionError`). So before
+upgrading, keep a way back:
+
+1. Note the image you are leaving. Every commit on `main` is published as a
+   `sha-<commit>` tag alongside `latest` — for example `sha-d6b1424` — so the
+   one to note is the `sha-` tag of the commit `main` pointed at before this
+   upgrade.
+2. Stop the bot, then copy `paxbot.db` out of the folder set by
+   `PAXBOT_DATA_DIR`. Stopping first matters: the database runs in WAL mode,
+   and a copy taken while the bot is running can miss recent writes.
+
+To roll back later, stop the bot, put that copy back in place of `paxbot.db`,
+set `PAXBOT_TAG` to the noted `sha-` tag, and start it again. The upgraded
+database cannot be used by the older image, so restoring the copy is required,
+not optional.
 
 ## Shows
 
