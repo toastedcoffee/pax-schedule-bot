@@ -285,10 +285,12 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
     @myschedule.autocomplete("show")
     async def myschedule_show_autocomplete(interaction: discord.Interaction,
                                            current: str):
-        """Only shows this user actually has saves for.
+        """Offers the shows this user has saved events for.
 
-        Someone with one show gets an empty menu, so the option is invisible in
-        ordinary use and only appears once it can do something.
+        Scoped to the user's own saves, not the server's show selection; empty
+        for someone with no saves. Particularly important after the bot advances
+        to the next show: this parameter becomes the user's only route back to
+        earlier saves.
         """
         try:
             slugs = saved_show_slugs(deps.conn, str(interaction.user.id))
