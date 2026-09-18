@@ -36,7 +36,13 @@ def set_followed(conn: sqlite3.Connection, guild_id: str, slugs: Sequence[str],
 
     A half-written set would leave the guild following a combination no admin
     chose, which resolves to a show nobody asked for.
+
+    An empty set is refused: zero rows is how followed_slugs reports "never
+    configured", so storing one would silently mean "follow everything".
     """
+    if not slugs:
+        raise ValueError("set_followed needs at least one show; use "
+                         "clear_followed to return a guild to following everything")
     stamp = now.isoformat()
     with transaction(conn):
         conn.execute("DELETE FROM guild_shows WHERE guild_id = ?", (guild_id,))

@@ -1,6 +1,8 @@
 """The guild follow set. Zero rows is the 'never configured' sentinel."""
 from datetime import UTC, datetime
 
+import pytest
+
 from paxbot.store.guilds import clear_followed, followed_slugs, set_followed
 
 GUILD = "987654321098765432"
@@ -29,6 +31,16 @@ def test_clearing_returns_the_guild_to_unconfigured(conn):
     set_followed(conn, GUILD, ["west"], ADMIN, NOW)
     clear_followed(conn, GUILD)
     assert followed_slugs(conn, GUILD) is None
+
+
+def test_an_empty_follow_set_is_refused_not_stored(conn):
+    """Zero rows already means "never configured", so writing an empty set
+    would silently turn "follow nothing" into "follow everything". The old
+    set must survive the refused call."""
+    set_followed(conn, GUILD, ["west"], ADMIN, NOW)
+    with pytest.raises(ValueError, match="clear_followed"):
+        set_followed(conn, GUILD, [], ADMIN, NOW)
+    assert followed_slugs(conn, GUILD) == ("west",)
 
 
 def test_guilds_do_not_leak_into_each_other(conn):
