@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -73,6 +74,22 @@ class BotDeps:
                            self.config.handover_grace_days)
 
 
+def show_for_day_menu(requested: str | None, config: Config,
+                      fallback: Callable[[], Show | None]) -> Show | None:
+    """The show whose days the day: autocomplete should offer.
+
+    /myschedule takes a show: argument, and its day: must be a day of THAT
+    show - offering the active show's dates instead suggests days that the
+    command then rejects as "not a day of" the chosen show. Commands without
+    a show: parameter pass None and get the active show. An unknown slug also
+    falls back: the command reports it on submit, and an empty menu would
+    say nothing.
+    """
+    if requested and requested in config.shows:
+        return config.shows[requested]
+    return fallback()
+
+
 DAY_HELP = "A show day: Saturday, Sat, or 2026-09-05"
 
 NO_SHOW_MESSAGE = (
@@ -95,7 +112,9 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         typed-and-submitted one goes through Show.resolve_day instead.
         """
         try:
-            show = deps.resolve_show(interaction.guild_id)
+            show = show_for_day_menu(
+                getattr(interaction.namespace, "show", None), deps.config,
+                lambda: deps.resolve_show(interaction.guild_id))
             if show is None:
                 return []
             needle = current.strip().casefold()
