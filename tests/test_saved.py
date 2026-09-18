@@ -10,6 +10,7 @@ from paxbot.store.saved import (
     save_event,
     saved_events,
     saved_gt_ids,
+    saved_show_slugs,
     unsave_event,
 )
 from tests.conftest import make_event
@@ -94,6 +95,18 @@ def test_no_foreign_key_constraint_on_saved(conn):
     """Deliberate: a saved row must outlive any surgery on the events table."""
     save_event(conn, USER, "west", "does-not-exist")
     assert saved_gt_ids(conn, USER, "west") == frozenset({"does-not-exist"})
+
+
+def test_saved_show_slugs_lists_only_shows_this_user_has_saves_for(conn):
+    save_event(conn, "u1", "west", "1")
+    save_event(conn, "u1", "east", "2")
+    save_event(conn, "u2", "aus", "3")
+    assert saved_show_slugs(conn, "u1") == ("east", "west")
+    assert saved_show_slugs(conn, "u2") == ("aus",)
+
+
+def test_saved_show_slugs_is_empty_for_a_user_with_no_saves(conn):
+    assert saved_show_slugs(conn, "nobody") == ()
 
 
 def test_migrates_a_v1_database(tmp_path):

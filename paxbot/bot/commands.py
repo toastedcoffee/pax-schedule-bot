@@ -27,7 +27,12 @@ from paxbot.store.queries import (
     shows_with_data,
     upcoming_events,
 )
-from paxbot.store.saved import save_event, saved_gt_ids, unsave_event
+from paxbot.store.saved import (
+    save_event,
+    saved_gt_ids,
+    saved_show_slugs,
+    unsave_event,
+)
 from paxbot.views import active_show, default_filters, find_conflicts, saved_view
 
 log = logging.getLogger(__name__)
@@ -242,20 +247,33 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
     # Not /me: Discord lists its own built-in /me action command in the same
     # picker, so typing /me quickly selects whichever entry is highlighted.
     @tree.command(name="myschedule", description="Your saved schedule")
-    @app_commands.describe(day=DAY_HELP)
-    async def myschedule(interaction: discord.Interaction, day: str | None = None):
-        show = deps.resolve_show(interaction.guild_id)
-        if show is None:
+    @app_commands.describe(day=DAY_HELP,
+                           show="A past show you saved events for")
+    async def myschedule(interaction: discord.Interaction,
+                         day: str | None = None,
+                         show: str | None = None):
+        chosen = deps.resolve_show(interaction.guild_id)
+        if show:
+            # Not restricted to the guild's follow set: once the handover rule
+            # moves on, a saved schedule would otherwise be unreachable by any
+            # command, and /setup is admin-only.
+            chosen = deps.config.shows.get(show)
+            if chosen is None:
+                await interaction.response.send_message(
+                    f"`{show[:32]}` is not a show this bot knows about.",
+                    ephemeral=True)
+                return
+        if chosen is None:
             await _say_no_show(interaction)
             return
         only = None
         if day:
             try:
-                only = show.resolve_day(day)
+                only = chosen.resolve_day(day)
             except DayError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        state = saved_view(deps.conn, show, str(interaction.user.id),
+        state = saved_view(deps.conn, chosen, str(interaction.user.id),
                            deps.config.drop_in_threshold_minutes, day=only)
         await interaction.response.send_message(
             embed=render.saved_embed(state,
@@ -263,6 +281,28 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
             ephemeral=True)
 
     myschedule.autocomplete("day")(day_autocomplete)
+
+    @myschedule.autocomplete("show")
+    async def myschedule_show_autocomplete(interaction: discord.Interaction,
+                                           current: str):
+        """Only shows this user actually has saves for.
+
+        Someone with one show gets an empty menu, so the option is invisible in
+        ordinary use and only appears once it can do something.
+        """
+        try:
+            slugs = saved_show_slugs(deps.conn, str(interaction.user.id))
+            needle = current.strip().casefold()
+            choices = []
+            for slug in slugs:
+                known = deps.config.shows.get(slug)
+                label = known.name if known else slug
+                if needle in label.casefold() or needle in slug:
+                    choices.append(app_commands.Choice(name=label, value=slug))
+            return choices[:AUTOCOMPLETE_LIMIT]
+        except Exception:
+            log.exception("myschedule show autocomplete failed")
+            return []
 
     @tree.command(name="setup", description="Choose which PAX shows this server follows")
     @app_commands.guild_only()

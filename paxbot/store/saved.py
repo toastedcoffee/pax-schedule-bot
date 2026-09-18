@@ -64,6 +64,19 @@ def saved_events(conn: sqlite3.Connection, user_id: str,
     return [to_event(r, categories_for(conn, show_slug, r["gt_id"])) for r in rows]
 
 
+def saved_show_slugs(conn: sqlite3.Connection, user_id: str) -> tuple[str, ...]:
+    """Shows this user has saved anything for, alphabetically.
+
+    Powers /myschedule's `show:` autocomplete. Scoped to the USER, not to the
+    guild's follow set: this is their own data, and the whole point is reaching
+    a schedule the handover rule has moved past.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT show_slug FROM saved WHERE user_id = ? "
+        "ORDER BY show_slug", (user_id,)).fetchall()
+    return tuple(r["show_slug"] for r in rows)
+
+
 def missing_saved_ids(conn: sqlite3.Connection, user_id: str,
                       show_slug: str) -> tuple[str, ...]:
     """Saved ids with no matching event row, so the UI can say 'removed'.
