@@ -113,8 +113,10 @@ DAY_HELP = "A show day: Saturday, Sat, or 2026-09-05"
 
 NOTHING_SYNCED_MESSAGE = (
     "No schedule data yet — the bot syncs shortly after starting. "
-    "If this lasts, an admin should check the logs, or run `/setup` to pick "
-    "a show that has published its schedule.")
+    "If this lasts, an admin should check the logs.")
+# Deliberately no `/setup` hint here, unlike NO_FOLLOWED_SHOW_MESSAGE below:
+# this message means NO show has synced, so there is nothing for an admin to
+# pick and sending them to /setup would waste their time.
 
 NO_FOLLOWED_SHOW_MESSAGE = (
     "This server is not following any shows with a published schedule. "
