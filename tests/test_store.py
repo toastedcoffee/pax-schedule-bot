@@ -13,6 +13,7 @@ from paxbot.store.events import (
     stored_hashes,
     upsert_events,
 )
+from paxbot.store.schema import SCHEMA
 
 
 def make_event(gt_id="1", title="Panel", hour=18, categories=("Panels",), day=None):
@@ -242,3 +243,24 @@ def test_migrating_preserves_existing_rows(tmp_path):
     conn = connect(path)
     assert get_event(conn, "west", "1").categories == ("Panels",)
     conn.close()
+
+
+def test_a_v2_database_gains_guild_shows_and_is_stamped_v3(tmp_path):
+    """New TABLES need no migration step - CREATE TABLE IF NOT EXISTS runs
+    first - but the version bump must still be verified, because stamping a
+    database to a version it did not reach is the failure _migrate exists to
+    prevent."""
+    path = tmp_path / "v2.db"
+    raw = sqlite3.connect(str(path))
+    raw.executescript(SCHEMA)
+    raw.execute("PRAGMA user_version = 2")
+    raw.commit()
+    raw.close()
+
+    conn = connect(str(path))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert SCHEMA_VERSION == 3
+        conn.execute("SELECT guild_id, show_slug, set_by, set_at FROM guild_shows")
+    finally:
+        conn.close()

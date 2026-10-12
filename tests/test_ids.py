@@ -74,3 +74,13 @@ def test_rejects_an_id_one_character_over_the_limit():
     overhead = len(f"{ids.PREFIX}{ids.SEP}{longest}{ids.SEP}")
     with pytest.raises(ids.IdError, match="too long"):
         ids.encode(longest, "9" * (ids.CUSTOM_ID_MAX - overhead + 1))
+
+
+def test_the_setup_kinds_round_trip():
+    assert ids.decode(ids.encode(ids.SEL_SHOWS)) == (ids.SEL_SHOWS, "")
+    assert ids.decode(ids.encode(ids.FOLLOW_ALL)) == (ids.FOLLOW_ALL, "")
+
+
+def test_the_setup_kinds_are_registered():
+    assert ids.SEL_SHOWS in ids.ALL_KINDS
+    assert ids.FOLLOW_ALL in ids.ALL_KINDS

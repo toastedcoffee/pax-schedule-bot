@@ -8,6 +8,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 DEFAULT_DROP_IN_THRESHOLD_MINUTES = 240
+# How long a show that has just ended keeps precedence over the next one. The
+# Monday after a convention is exactly when people compare what they saw, and
+# flipping away that morning makes a whole weekend's saved schedule unreachable.
+DEFAULT_HANDOVER_GRACE_DAYS = 14
 
 # Literal names rather than strftime("%A") or calendar.day_name, both of which
 # follow the process locale: matching what someone typed must not change with
@@ -105,6 +109,7 @@ class Show:
 class Config:
     shows: dict[str, Show]
     drop_in_threshold_minutes: int
+    handover_grace_days: int = DEFAULT_HANDOVER_GRACE_DAYS
 
     def show(self, slug: str) -> Show:
         try:
@@ -133,5 +138,8 @@ def load_config(path: Path) -> Config:
         shows=shows,
         drop_in_threshold_minutes=int(
             defaults.get("drop_in_threshold_minutes", DEFAULT_DROP_IN_THRESHOLD_MINUTES)
+        ),
+        handover_grace_days=int(
+            defaults.get("handover_grace_days", DEFAULT_HANDOVER_GRACE_DAYS)
         ),
     )

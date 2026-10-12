@@ -58,4 +58,17 @@ CREATE TABLE IF NOT EXISTS saved (
 
 CREATE INDEX IF NOT EXISTS idx_saved_user
     ON saved (user_id, show_slug);
+
+CREATE TABLE IF NOT EXISTS guild_shows (
+    guild_id  TEXT NOT NULL,          -- Discord snowflake, as text
+    show_slug TEXT NOT NULL,
+    set_by    TEXT NOT NULL,          -- the admin's user id
+    set_at    TEXT NOT NULL,          -- ISO 8601 UTC
+    PRIMARY KEY (guild_id, show_slug)
+);
+
+-- ZERO ROWS for a guild means "never configured", which resolves to "follow
+-- every configured show". That sentinel is unambiguous because /setup's
+-- select uses min_values=1: an admin cannot submit an empty set, so the only
+-- route to zero rows is the explicit "Follow every show" button.
 """

@@ -55,14 +55,19 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sync = sub.add_parser("sync", help="fetch the schedule and update the store")
-    sync.add_argument("--show", default="west")
+    # Mutually exclusive, because `sync --all --show x` used to sync everything
+    # and ignore --show - a typo obeyed instead of refused.
+    target = sync.add_mutually_exclusive_group()
+    target.add_argument("--show", default=None)
+    target.add_argument("--all", action="store_true",
+                        help="sync every show in the config (also the default)")
     sync.add_argument("--db", default=None)
     sync.add_argument("--config", default=None)
 
     listing = sub.add_parser("list", help="list events for a day")
     listing.add_argument("--day", required=True, help="YYYY-MM-DD")
     listing.add_argument("--category")
-    listing.add_argument("--show", default="west")
+    listing.add_argument("--show", required=True)
     listing.add_argument("--db", default=None)
     listing.add_argument("--config", default=None)
 
@@ -87,11 +92,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"failed to load config {config_path}: {exc}", file=sys.stderr)
         return 2
 
-    try:
-        show = config.show(args.show)
-    except KeyError as exc:
-        print(str(exc).strip("\"'"), file=sys.stderr)
-        return 2
+    # No --show means sync every configured show, exactly as --all does. A
+    # hardcoded "west" default was wrong once an instance could serve any set
+    # of shows, and bare `paxbot sync` is the first command run on a fresh
+    # install - nothing has data yet, so neither a required --show nor an
+    # active-show default could work there. --all remains the explicit
+    # spelling of the same thing.
+    sync_all = args.command == "sync" and args.show is None
+
+    show = None
+    if not sync_all:
+        try:
+            show = config.show(args.show)
+        except KeyError as exc:
+            print(str(exc).strip("\"'"), file=sys.stderr)
+            return 2
 
     # Validate all arguments before connect() - connect() creates the db file
     # as a side effect, and a usage error must not leave one behind.
@@ -109,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cannot open database: {exc}", file=sys.stderr)
         return 1
     try:
+        if sync_all:
+            return _cmd_sync_all(conn, config)
         if args.command == "sync":
             return _cmd_sync(conn, show)
         return _cmd_list(conn, show, day, args.category, config.drop_in_threshold_minutes)
@@ -124,12 +141,40 @@ def _cmd_sync(conn, show) -> int:
     except (LeapError, GuardRailError, sqlite3.Error) as exc:
         print(f"sync failed: {exc}", file=sys.stderr)
         return 1
-    print(
-        f"{show.slug}: added {report.added}, changed {report.changed}, "
-        f"cancelled {report.removed}, unchanged {report.unchanged}, "
-        f"skipped {report.skipped}"
-    )
+    print(_format_report(report))
     return 0
+
+
+def _format_report(report) -> str:
+    """One line per synced show, shared by `sync` and `sync --all`.
+
+    Shared so the two cannot drift: a skipped count that only one of them
+    prints hides parse problems from whoever runs the other.
+    """
+    return (f"{report.show_slug}: added {report.added}, "
+            f"changed {report.changed}, cancelled {report.removed}, "
+            f"unchanged {report.unchanged}, skipped {report.skipped}")
+
+
+def _cmd_sync_all(conn, config) -> int:
+    """Sync every configured show, reporting each, failing only at the end.
+
+    One broken show must not stop the others - the same isolation the bot's
+    own loop applies.
+    """
+    failed = []
+    for slug in sorted(config.shows):
+        show = config.shows[slug]
+        try:
+            # Pass the fetcher explicitly, same reason as _cmd_sync: run_sync's
+            # own default is bound in its module, so tests that patch
+            # paxbot.cli.fetch_schedules would otherwise hit the network.
+            report = run_sync(conn, show, fetcher=fetch_schedules)
+            print(_format_report(report))
+        except Exception as exc:
+            failed.append(slug)
+            print(f"{show.slug}: FAILED - {exc}", file=sys.stderr)
+    return 1 if failed else 0
 
 
 def _cmd_list(conn, show, day: date, category: str | None, threshold: int) -> int:

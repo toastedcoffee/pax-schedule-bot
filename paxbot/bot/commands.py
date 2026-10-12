@@ -1,4 +1,4 @@
-"""The three slash commands. Thin: they build a view model and render it.
+"""The four slash commands. Thin: they build a view model and render it.
 
 No fetching, no parsing, no HTTP - see ARCHITECTURE.md. Commands read the
 store; the sync job is the only thing that talks to the network.
@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -16,16 +17,24 @@ from discord import app_commands
 
 from paxbot.bot import render
 from paxbot.bot.panel import ConfirmSave, SchedulePanel, _apologise
+from paxbot.bot.setup_view import SetupView
 from paxbot.config import Config, DayError, Show
 from paxbot.store.events import get_event
+from paxbot.store.guilds import followed_slugs
 from paxbot.store.queries import (
     count_matches_before,
     distinct_categories,
     search_events,
+    shows_with_data,
     upcoming_events,
 )
-from paxbot.store.saved import save_event, saved_gt_ids, unsave_event
-from paxbot.views import default_filters, find_conflicts, saved_view
+from paxbot.store.saved import (
+    save_event,
+    saved_gt_ids,
+    saved_show_slugs,
+    unsave_event,
+)
+from paxbot.views import active_show, default_filters, find_conflicts, saved_view
 
 log = logging.getLogger(__name__)
 
@@ -42,23 +51,92 @@ AUTOCOMPLETE_LIMIT = 25
 class BotDeps:
     conn: sqlite3.Connection
     config: Config
-    show: Show
 
     def now(self) -> datetime:
         return datetime.now(UTC)
 
-    def resolve_show(self, guild_id: int | None) -> Show:
+    def resolve_show(self, guild_id: int | None) -> Show | None:
         """The ONLY place the show is chosen.
 
-        Phase 2 ignores guild_id and returns the configured default. Phase 3
-        replaces this body with a guild_config lookup and nothing else moves.
-        PAX Unplugged in December makes that a dated requirement, not a
-        hypothetical - which is why the seam exists now.
+        "Which show" is a time question, not a user question, so no command
+        asks the user: a guild follows a SET of shows and the bot picks the
+        current one. A guild that has never run /setup follows everything,
+        which is what makes adding a block to shows.toml enough on its own.
+
+        Returns None when no followed show has any synced data - a fresh
+        install before its first sync. Callers must say so rather than
+        failing silently.
         """
-        return self.show
+        slugs = (followed_slugs(self.conn, str(guild_id))
+                 if guild_id is not None else None)
+        candidates = [show for show in self.config.shows.values()
+                      if slugs is None or show.slug in slugs]
+        return active_show(candidates, shows_with_data(self.conn), self.now(),
+                           self.config.handover_grace_days)
+
+
+def show_for_day_menu(requested: str | None, config: Config,
+                      fallback: Callable[[], Show | None]) -> Show | None:
+    """The show whose days the day: autocomplete should offer.
+
+    /myschedule takes a show: argument, and its day: must be a day of THAT
+    show - offering the active show's dates instead suggests days that the
+    command then rejects as "not a day of" the chosen show. Commands without
+    a show: parameter pass None and get the active show. An unknown slug also
+    falls back: the command reports it on submit, and an empty menu would
+    say nothing.
+    """
+    if requested and requested in config.shows:
+        return config.shows[requested]
+    return fallback()
+
+
+def saved_show_choices(slugs: Sequence[str], config: Config,
+                       current: str) -> list[app_commands.Choice]:
+    """The /myschedule show: menu: saved shows the config still knows.
+
+    A save for a show since removed from shows.toml stays in the database, but
+    offering it only leads to "not a show this bot knows about" on submit.
+    """
+    needle = current.strip().casefold()
+    choices = []
+    for slug in slugs:
+        known = config.shows.get(slug)
+        if known is None:
+            continue
+        if needle in known.name.casefold() or needle in slug:
+            choices.append(app_commands.Choice(name=known.name, value=slug))
+    return choices[:AUTOCOMPLETE_LIMIT]
 
 
 DAY_HELP = "A show day: Saturday, Sat, or 2026-09-05"
+
+NOTHING_SYNCED_MESSAGE = (
+    "No schedule data yet — the bot syncs shortly after starting. "
+    "If this lasts, an admin should check the logs.")
+# Deliberately no `/setup` hint here, unlike NO_FOLLOWED_SHOW_MESSAGE below:
+# this message means NO show has synced, so there is nothing for an admin to
+# pick and sending them to /setup would waste their time.
+
+NO_FOLLOWED_SHOW_MESSAGE = (
+    "This server is not following any shows with a published schedule. "
+    "An admin can change which shows this server follows with `/setup`.")
+
+
+def no_show_message(any_show_has_data: bool) -> str:
+    """What to say when resolve_show finds nothing, by which case it is.
+
+    Pure so the wording is testable without a Discord interaction. The two
+    cases need different advice: once some other show has synced, telling
+    this server to wait for a sync sends an admin to the logs over a
+    follow set only /setup can change.
+    """
+    return NO_FOLLOWED_SHOW_MESSAGE if any_show_has_data else NOTHING_SYNCED_MESSAGE
+
+
+async def _say_no_show(interaction: discord.Interaction, deps: BotDeps) -> None:
+    await interaction.response.send_message(
+        no_show_message(bool(shows_with_data(deps.conn))), ephemeral=True)
 
 
 def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
@@ -71,7 +149,11 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         typed-and-submitted one goes through Show.resolve_day instead.
         """
         try:
-            show = deps.resolve_show(interaction.guild_id)
+            show = show_for_day_menu(
+                getattr(interaction.namespace, "show", None), deps.config,
+                lambda: deps.resolve_show(interaction.guild_id))
+            if show is None:
+                return []
             needle = current.strip().casefold()
             choices = []
             for day in show.days():
@@ -92,6 +174,9 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
                        day: str | None = None,
                        category: str | None = None):
         show = deps.resolve_show(interaction.guild_id)
+        if show is None:
+            await _say_no_show(interaction, deps)
+            return
         filters = default_filters(deps.conn, show, deps.now())
         if day:
             try:
@@ -135,6 +220,8 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         # argument, not a component with a 25-option ceiling, so a substring
         # match can surface any tail category the select cannot.
         show = deps.resolve_show(interaction.guild_id)
+        if show is None:
+            return []
         cats = distinct_categories(deps.conn, show.slug)
         if current:
             needle = current.casefold()
@@ -150,6 +237,9 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
                    query: app_commands.Range[str, 2, 100],
                    day: str | None = None):
         show = deps.resolve_show(interaction.guild_id)
+        if show is None:
+            await _say_no_show(interaction, deps)
+            return
         event = get_event(deps.conn, show.slug, query)
         if event is None:
             # `query` holds a gt_id when chosen from autocomplete; anything
@@ -187,6 +277,8 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
         deps: BotDeps, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice]:
         show = deps.resolve_show(interaction.guild_id)
+        if show is None:
+            return []
         tz = ZoneInfo(show.timezone)
         now = deps.now()
         running = show.is_running(now)
@@ -211,17 +303,33 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
     # Not /me: Discord lists its own built-in /me action command in the same
     # picker, so typing /me quickly selects whichever entry is highlighted.
     @tree.command(name="myschedule", description="Your saved schedule")
-    @app_commands.describe(day=DAY_HELP)
-    async def myschedule(interaction: discord.Interaction, day: str | None = None):
-        show = deps.resolve_show(interaction.guild_id)
+    @app_commands.describe(day=DAY_HELP,
+                           show="A past show you saved events for")
+    async def myschedule(interaction: discord.Interaction,
+                         day: str | None = None,
+                         show: str | None = None):
+        chosen = deps.resolve_show(interaction.guild_id)
+        if show:
+            # Not restricted to the guild's follow set: once the handover rule
+            # moves on, a saved schedule would otherwise be unreachable by any
+            # command, and /setup is admin-only.
+            chosen = deps.config.shows.get(show)
+            if chosen is None:
+                await interaction.response.send_message(
+                    f"`{show[:32]}` is not a show this bot knows about.",
+                    ephemeral=True)
+                return
+        if chosen is None:
+            await _say_no_show(interaction, deps)
+            return
         only = None
         if day:
             try:
-                only = show.resolve_day(day)
+                only = chosen.resolve_day(day)
             except DayError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        state = saved_view(deps.conn, show, str(interaction.user.id),
+        state = saved_view(deps.conn, chosen, str(interaction.user.id),
                            deps.config.drop_in_threshold_minutes, day=only)
         await interaction.response.send_message(
             embed=render.saved_embed(state,
@@ -229,6 +337,39 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
             ephemeral=True)
 
     myschedule.autocomplete("day")(day_autocomplete)
+
+    @myschedule.autocomplete("show")
+    async def myschedule_show_autocomplete(interaction: discord.Interaction,
+                                           current: str):
+        """Offers the shows this user has saved events for.
+
+        Scoped to the user's own saves, not the server's show selection; empty
+        for someone with no saves. Particularly important after the bot advances
+        to the next show: this parameter becomes the user's only route back to
+        earlier saves.
+        """
+        try:
+            return saved_show_choices(
+                saved_show_slugs(deps.conn, str(interaction.user.id)),
+                deps.config, current)
+        except Exception:
+            log.exception("myschedule show autocomplete failed")
+            return []
+
+    @tree.command(name="setup", description="Choose which PAX shows this server follows")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    async def setup(interaction: discord.Interaction):
+        # default_permissions hides the command from non-admins in the picker,
+        # which is better than accepting the interaction and refusing it after
+        # the fact.
+        view = SetupView(deps, interaction.guild_id, interaction.user.id)
+        await interaction.response.send_message(
+            embed=view.embed(), view=view, ephemeral=True)
+        # The command's response is the panel, so the command is its first
+        # anchor. The view replaces it with each click it answers in place;
+        # this token alone would die 15 minutes after /setup.
+        view.anchor = interaction
 
 
 def _show_start(show: Show) -> datetime:

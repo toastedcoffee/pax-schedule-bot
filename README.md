@@ -12,10 +12,12 @@ Self-hosted. Your data stays on your machine.
 ## Status
 
 The data layer, sync job, CLI and Discord bot are all built and working. The
-bot serves three slash commands — `/schedule`, `/find` and `/myschedule` — and syncs
-itself on a loop once it is running, so nothing external needs to trigger a
-sync anymore. The CLI's `sync` and `list` subcommands are still there too,
-mainly for checking the store directly without going through Discord.
+bot serves four slash commands — `/schedule`, `/find`, `/myschedule` and the
+admin-only `/setup` — and syncs itself on a loop once it is running, so nothing
+external needs to trigger a sync anymore. One instance serves every show in
+`shows.toml` and picks the current one by date (see "Shows" below). The CLI's
+`sync` and `list` subcommands are still there too, mainly for checking the
+store directly without going through Discord.
 
 In the Discord Developer Portal the application is registered as **Lanyard
 Bot**; the package, repo and CLI all stay `paxbot`.
@@ -74,8 +76,8 @@ in Portainer, redeploy with **Re-pull image** on).
 **Run a one-off command** (does not require the bot to be running; uses the
 same image and data):
 
-    docker compose run --rm paxbot sync
-    docker compose run --rm paxbot list --day 2026-09-04 --category Panels
+    docker compose run --rm paxbot sync --all
+    docker compose run --rm paxbot list --show west --day 2026-09-04 --category Panels
 
 **Build from source** instead of pulling the published image — for example to
 test a change before it merges:
@@ -115,7 +117,7 @@ the PAX schedule API and to Discord.
 
 The bot syncs itself on a loop while it is running, so no external cron job
 or scheduled task is needed to keep the schedule fresh. A cron entry running
-`docker compose run --rm paxbot sync` is only useful if you want the CLI's
+`docker compose run --rm paxbot sync --all` is only useful if you want the CLI's
 data kept current without running the bot at all.
 
 ### Option B: Standalone Python
@@ -130,9 +132,15 @@ No Docker. Requires Python 3.11+.
 script is declared, but an editable install does not reliably put it on your
 PATH; `python -m paxbot` always works regardless:
 
-    python -m paxbot sync                              # fetch the schedule
-    python -m paxbot list --day 2026-09-04              # list a day
-    python -m paxbot list --day 2026-09-04 --category Panels
+    python -m paxbot sync                              # fetch every show
+    python -m paxbot sync --all                        # the same, spelled out
+    python -m paxbot sync --show west                  # fetch one show
+    python -m paxbot list --show west --day 2026-09-04  # list a day
+    python -m paxbot list --show west --day 2026-09-04 --category Panels
+
+`sync` with no arguments syncs every show in the config, which is what `--all`
+asks for explicitly; pass `--show` to sync just one. `list` always needs a
+`--show`, since an instance can serve any set of shows.
 
 By default the database is `paxbot.db` in the current directory and the show
 config is the `shows.toml` shipped with the repo. To find real category names
@@ -176,18 +184,70 @@ dependency, so set the variables in your shell:
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
 | `DISCORD_TOKEN` | yes | — | Bot token from the Developer Portal (Bot -> Reset Token) |
-| `PAXBOT_SHOW` | no | `west` | Which `shows.toml` block the bot serves |
 | `PAXBOT_GUILD_ID` | no | none (registers globally) | Registers slash commands to one server instantly instead of waiting up to an hour for a global rollout |
 | `PAXBOT_LOG_LEVEL` | no | `INFO` | Python logging level |
 | `PAXBOT_DATA_DIR` | no | `./data` | Docker only: host directory mounted at `/data` for the database |
 | `PAXBOT_UID` / `PAXBOT_GID` | no | `568` | Docker only: the uid/gid the container runs as (TrueNAS SCALE's `apps` user). Must own the data directory |
 | `PAXBOT_TAG` | no | `latest` | Docker only: which published image tag to run; pin a `sha-<commit>` tag to hold a version |
 
+**Upgrading:** `PAXBOT_SHOW` has been removed. If it is still set, the bot logs a
+warning at startup and ignores it; delete it from your `.env` or stack.
+
+This version also upgrades the database to schema v3 on first start, and the
+previous image refuses a v3 database (`SchemaVersionError`). So before
+upgrading, keep a way back:
+
+1. Note the image you are leaving. Every commit on `main` is published as a
+   `sha-<commit>` tag alongside `latest` — for example `sha-d6b1424` — so the
+   one to note is the `sha-` tag of the commit `main` pointed at before this
+   upgrade.
+2. Stop the bot, then copy `paxbot.db` out of the folder set by
+   `PAXBOT_DATA_DIR`. Stopping first matters: the database runs in WAL mode,
+   and a copy taken while the bot is running can miss recent writes.
+
+To roll back later, stop the bot, put that copy back in place of `paxbot.db`,
+set `PAXBOT_TAG` to the noted `sha-` tag, and start it again. The upgraded
+database cannot be used by the older image, so restoring the copy is required,
+not optional.
+
+## Shows
+
+`shows.toml` lists every show this instance serves, one `[shows.<slug>]` block
+each. There is no setting for "the current show": the bot works it out from
+the calendar, picking the first match from
+
+1. a show that is running now;
+2. a show that ended within `handover_grace_days` (default 14, in
+   `[defaults]`), so a finished show stays up while people look back at it;
+3. the soonest upcoming show;
+4. the most recently ended show.
+
+Dates are judged in each show's own timezone, and a show with no synced events
+yet is skipped. See `docs/adr/0006-time-based-show-resolution.md`.
+
+The bot syncs every show that has not finished yet, plus any show that has
+never synced, so a past show added to `shows.toml` is backfilled once. It
+syncs hourly while a show is running and every four hours otherwise; one show
+failing to sync does not hold up the others.
+
+### Choosing shows per server
+
+By default a Discord server follows every show in `shows.toml`, including any
+added later. A server admin (anyone with **Manage Server**) can run `/setup`
+to pick specific shows instead; the bot then chooses among those only. **Follow
+every show** in the same message goes back to the default. A server that has
+picked specific shows does not follow a show added later until an admin
+returns to `/setup`. DMs always follow every show.
+
+Saved events are kept per show. After the bot moves on to the next show,
+`/myschedule show:` still reaches the saved schedule for any show you starred
+events in.
+
 ## Adding another PAX
 
 Add a block to `shows.toml`:
 
-    [shows.east]
+    [shows.east-2027]
     name       = "PAX East 2027"
     base_url   = "https://east.paxsite.com"
     api_key    = "..."
@@ -195,7 +255,11 @@ Add a block to `shows.toml`:
     start_date = 2027-04-21
     end_date   = 2027-04-25
 
-Recover the API key with `python scripts/find_api_key.py east`.
+Recover the API key with `python scripts/find_api_key.py east-2027`. The key only
+exists once ReedPop has published that show's schedule, which is why the bot
+cannot find new shows by itself: adding one is always this edit plus a restart.
+A finished show's key keeps working, so a past show can be added too and its
+schedule will be backfilled.
 
 Under Docker, the published image picks up the change once it merges to
 `main` and you update the stack. To use it sooner, mount your edited
@@ -209,9 +273,12 @@ this year's ~713 events look cancelled the moment the new one syncs in under
 the same name - permanently, since events are never deleted, only marked
 cancelled.
 
-Instead, give each year its own slug:
+The shipped `[shows.west]` and `[shows.east]` blocks are the 2026 shows. Never
+rename or repoint them: stored events and every user's saved schedule are keyed
+by slug, so renaming `west` to `west-2026` would orphan all of them. Later
+years get year-suffixed slugs, per ADR 0005:
 
-    [shows.west-2026]
+    [shows.west]
     name       = "PAX West 2026"
     ...
 
@@ -224,7 +291,7 @@ Instead, give each year its own slug:
     end_date   = 2027-09-06
 
 `paxbot sync --show west-2027` and `paxbot list --show west-2027 ...` then
-address the new year, while `west-2026`'s events stay in the store and
+address the new year, while `west`'s 2026 events stay in the store and
 addressable under their own slug. See
 `docs/adr/0005-one-show-slug-per-year.md`.
 

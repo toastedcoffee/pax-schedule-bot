@@ -1,12 +1,13 @@
 from datetime import UTC, date, datetime
 
 from paxbot.store.db import transaction
-from paxbot.store.events import upsert_events
+from paxbot.store.events import mark_cancelled, upsert_events
 from paxbot.store.queries import (
     count_matches_before,
     distinct_categories,
     match_events,
     search_events,
+    shows_with_data,
     upcoming_events,
 )
 from tests.conftest import make_event
@@ -65,7 +66,6 @@ def test_search_respects_limit(conn):
 
 
 def test_search_excludes_cancelled(conn):
-    from paxbot.store.events import mark_cancelled
     seed(conn, [make_event(gt_id="1", title="Gone Panel")])
     with transaction(conn):
         mark_cancelled(conn, "west", ["1"])
@@ -189,7 +189,6 @@ def test_match_narrows_by_day_and_exact_category(conn):
 
 
 def test_match_excludes_cancelled_and_other_shows(conn):
-    from paxbot.store.events import mark_cancelled
     seed(conn, [
         make_event(gt_id="1", title="Jackbox"),
         make_event(gt_id="2", title="Jackbox Gone"),
@@ -198,3 +197,24 @@ def test_match_excludes_cancelled_and_other_shows(conn):
     with transaction(conn):
         mark_cancelled(conn, "west", ["2"])
     assert [e.gt_id for e in match_events(conn, "west", "jackbox")] == ["1"]
+
+
+# ---- shows_with_data -------------------------------------------------------
+
+def test_shows_with_data_lists_only_shows_holding_live_events(conn):
+    with transaction(conn):
+        upsert_events(conn, [make_event(gt_id="1", show_slug="west"),
+                             make_event(gt_id="2", show_slug="east")])
+    assert shows_with_data(conn) == frozenset({"west", "east"})
+
+
+def test_shows_with_data_ignores_a_show_whose_events_are_all_cancelled(conn):
+    """A show the bot cannot usefully render must not be selectable."""
+    with transaction(conn):
+        upsert_events(conn, [make_event(gt_id="1", show_slug="west")])
+        mark_cancelled(conn, "west", ["1"])
+    assert shows_with_data(conn) == frozenset()
+
+
+def test_shows_with_data_is_empty_on_a_fresh_database(conn):
+    assert shows_with_data(conn) == frozenset()

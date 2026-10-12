@@ -3,8 +3,10 @@ from pathlib import Path
 
 import pytest
 
+from paxbot import cli
 from paxbot.cli import _ascii, main
 from paxbot.store.db import SCHEMA_VERSION, connect
+from paxbot.sync.runner import SyncReport
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -29,7 +31,7 @@ def test_sync_reports_counts(db, capsys):
 def test_list_shows_events_in_time_order(db, capsys):
     main(["sync", "--db", db])
     capsys.readouterr()
-    assert main(["list", "--day", "2026-09-04", "--db", db]) == 0
+    assert main(["list", "--show", "west", "--day", "2026-09-04", "--db", db]) == 0
     out = capsys.readouterr().out
     assert out.index("Crokinole") < out.index("Can't Stop")
     assert "Tabletop Tourney (LVL 2)" in out
@@ -38,7 +40,7 @@ def test_list_shows_events_in_time_order(db, capsys):
 def test_list_marks_drop_ins(db, capsys):
     main(["sync", "--db", db])
     capsys.readouterr()
-    main(["list", "--day", "2026-09-04", "--db", db])
+    main(["list", "--show", "west", "--day", "2026-09-04", "--db", db])
     out = capsys.readouterr().out
     assert "[drop-in]" in out
 
@@ -46,7 +48,8 @@ def test_list_marks_drop_ins(db, capsys):
 def test_list_filters_by_category(db, capsys):
     main(["sync", "--db", db])
     capsys.readouterr()
-    main(["list", "--day", "2026-09-04", "--category", "Tournaments", "--db", db])
+    main(["list", "--show", "west", "--day", "2026-09-04",
+          "--category", "Tournaments", "--db", db])
     out = capsys.readouterr().out
     assert "Can't Stop" in out
     assert "Crokinole" not in out
@@ -56,7 +59,7 @@ def test_times_render_in_the_shows_timezone_not_utc(db, capsys):
     """11:30 PDT is 18:30 UTC. Printing the raw instant would say 6:30pm."""
     main(["sync", "--db", db])
     capsys.readouterr()
-    main(["list", "--day", "2026-09-04", "--db", db])
+    main(["list", "--show", "west", "--day", "2026-09-04", "--db", db])
     out = capsys.readouterr().out
     assert "11:30am" in out
     assert "6:30pm" not in out
@@ -73,7 +76,7 @@ def test_output_is_ascii_only(db, capsys):
     """Windows consoles default to cp1252; non-ASCII renders as garbage."""
     main(["sync", "--db", db])
     capsys.readouterr()
-    main(["list", "--day", "2026-09-04", "--db", db])
+    main(["list", "--show", "west", "--day", "2026-09-04", "--db", db])
     out = capsys.readouterr().out
     assert out.isascii(), [c for c in set(out) if not c.isascii()]
 
@@ -103,7 +106,7 @@ def test_an_explicit_db_flag_beats_the_env_var(tmp_path, monkeypatch):
 def test_no_db_file_is_created_when_day_is_invalid(tmp_path):
     """connect() must run after argument validation, not before."""
     db_path = tmp_path / "should-not-exist.db"
-    assert main(["list", "--day", "nope", "--db", str(db_path)]) == 2
+    assert main(["list", "--show", "west", "--day", "nope", "--db", str(db_path)]) == 2
     assert not db_path.exists()
 
 
@@ -218,3 +221,114 @@ def test_packaged_config_is_the_last_resort_fallback(db, tmp_path, monkeypatch, 
     monkeypatch.chdir(empty_dir)
     assert main(["sync", "--db", db]) == 0
     assert "west: added" in capsys.readouterr().out
+
+
+def test_sync_all_syncs_every_configured_show(tmp_path, monkeypatch, capsys):
+    """One flag, because a multi-show instance otherwise needs one command per
+    show and will quietly miss the one that was just added."""
+    synced = []
+
+    def fake_run_sync(conn, show, fetcher=None):
+        synced.append(show.slug)
+        return SyncReport(show_slug=show.slug, added=1, changed=2, removed=3,
+                          unchanged=4, skipped=5)
+
+    monkeypatch.setattr(cli, "run_sync", fake_run_sync)
+    config = tmp_path / "shows.toml"
+    config.write_text(
+        '[shows.west]\nname="W"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/Los_Angeles"\nstart_date=2026-09-04\nend_date=2026-09-07\n'
+        '[shows.east]\nname="E"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/New_York"\nstart_date=2026-03-26\nend_date=2026-03-29\n',
+        encoding="utf-8")
+    code = cli.main(["sync", "--all", "--config", str(config),
+                     "--db", str(tmp_path / "db.sqlite")])
+    assert code == 0
+    assert sorted(synced) == ["east", "west"]
+    # The same line as a single-show sync: a skipped count reported by only
+    # one of the two commands hides parse problems from whoever uses --all.
+    out = capsys.readouterr().out
+    assert "west: added 1, changed 2, cancelled 3, unchanged 4, skipped 5" in out
+
+
+def test_sync_all_works_without_a_west_show(tmp_path, monkeypatch):
+    """--all must not require any particular show to exist. This phase
+    retired PAXBOT_SHOW, and with it the hardcoded "west" default, precisely
+    so an instance can serve any set of shows."""
+    synced = []
+
+    def fake_run_sync(conn, show, fetcher=None):
+        synced.append(show.slug)
+        return SyncReport(show_slug=show.slug)
+
+    monkeypatch.setattr(cli, "run_sync", fake_run_sync)
+    config = tmp_path / "shows.toml"
+    config.write_text(
+        '[shows.east]\nname="E"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/New_York"\nstart_date=2026-03-26\nend_date=2026-03-29\n'
+        '[shows.south]\nname="S"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/Chicago"\nstart_date=2026-01-22\nend_date=2026-01-25\n',
+        encoding="utf-8")
+    code = cli.main(["sync", "--all", "--config", str(config),
+                     "--db", str(tmp_path / "db.sqlite")])
+    assert code == 0
+    assert sorted(synced) == ["east", "south"]
+
+
+def test_sync_all_isolates_one_shows_failure_from_the_other(tmp_path, monkeypatch, capsys):
+    """The bot's own sync loop isolates one show's failure from the others;
+    --all must do the same instead of stopping partway through."""
+    synced = []
+
+    def fake_run_sync(conn, show, fetcher=None):
+        synced.append(show.slug)
+        if show.slug == "east":
+            raise RuntimeError("boom")
+        return SyncReport(show_slug=show.slug)
+
+    monkeypatch.setattr(cli, "run_sync", fake_run_sync)
+    config = tmp_path / "shows.toml"
+    config.write_text(
+        '[shows.west]\nname="W"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/Los_Angeles"\nstart_date=2026-09-04\nend_date=2026-09-07\n'
+        '[shows.east]\nname="E"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/New_York"\nstart_date=2026-03-26\nend_date=2026-03-29\n',
+        encoding="utf-8")
+    code = cli.main(["sync", "--all", "--config", str(config),
+                     "--db", str(tmp_path / "db.sqlite")])
+    err = capsys.readouterr().err
+
+    assert sorted(synced) == ["east", "west"]
+    assert "east" in err
+    assert code == 1
+
+
+def test_bare_sync_syncs_every_configured_show(tmp_path, monkeypatch, capsys):
+    """`paxbot sync` is the first command run on a fresh install, before any
+    show has data - so it cannot require --show, and syncs the lot."""
+    synced = []
+
+    def fake_run_sync(conn, show, fetcher=None):
+        synced.append(show.slug)
+        return SyncReport(show_slug=show.slug)
+
+    monkeypatch.setattr(cli, "run_sync", fake_run_sync)
+    config = tmp_path / "shows.toml"
+    config.write_text(
+        '[shows.east]\nname="E"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/New_York"\nstart_date=2026-03-26\nend_date=2026-03-29\n'
+        '[shows.south]\nname="S"\nbase_url="https://e.invalid"\napi_key="k"\n'
+        'timezone="America/Chicago"\nstart_date=2026-01-22\nend_date=2026-01-25\n',
+        encoding="utf-8")
+    code = cli.main(["sync", "--config", str(config),
+                     "--db", str(tmp_path / "db.sqlite")])
+    assert code == 0
+    assert sorted(synced) == ["east", "south"]
+
+
+def test_sync_rejects_all_together_with_show(db, capsys):
+    """`--all --show x` used to sync everything and ignore --show, which reads
+    as a typo that was obeyed rather than one that was refused."""
+    with pytest.raises(SystemExit):
+        main(["sync", "--all", "--show", "west", "--db", db])
+    assert "not allowed with" in capsys.readouterr().err

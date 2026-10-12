@@ -10,6 +10,7 @@ from paxbot.store.saved import (
     save_event,
     saved_events,
     saved_gt_ids,
+    saved_show_slugs,
     unsave_event,
 )
 from tests.conftest import make_event
@@ -17,8 +18,8 @@ from tests.conftest import make_event
 USER = "123456789012345678"
 
 
-def test_schema_version_is_two():
-    assert SCHEMA_VERSION == 2
+def test_schema_version_is_three():
+    assert SCHEMA_VERSION == 3
 
 
 def test_save_then_read_back(conn):
@@ -96,6 +97,18 @@ def test_no_foreign_key_constraint_on_saved(conn):
     assert saved_gt_ids(conn, USER, "west") == frozenset({"does-not-exist"})
 
 
+def test_saved_show_slugs_lists_only_shows_this_user_has_saves_for(conn):
+    save_event(conn, "u1", "west", "1")
+    save_event(conn, "u1", "east", "2")
+    save_event(conn, "u2", "aus", "3")
+    assert saved_show_slugs(conn, "u1") == ("east", "west")
+    assert saved_show_slugs(conn, "u2") == ("aus",)
+
+
+def test_saved_show_slugs_is_empty_for_a_user_with_no_saves(conn):
+    assert saved_show_slugs(conn, "nobody") == ()
+
+
 def test_migrates_a_v1_database(tmp_path):
     # NOTE: deviates from the brief's literal fixture SQL. The brief's version
     # created `events` with only (show_slug, gt_id), which crashes inside
@@ -121,7 +134,7 @@ def test_migrates_a_v1_database(tmp_path):
 
     c = connect(path)
     try:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert c.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         names = {r["name"] for r in c.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "saved" in names

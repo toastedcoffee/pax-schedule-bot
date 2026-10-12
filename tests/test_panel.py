@@ -342,7 +342,7 @@ def test_a_find_card_disables_its_button_and_says_so_on_timeout(conn):
     from paxbot.store.events import get_event
 
     async def run():
-        deps = BotDeps(conn=conn, config=Config(shows={"west": SHOW}, drop_in_threshold_minutes=THRESHOLD), show=SHOW)
+        deps = BotDeps(conn=conn, config=Config(shows={"west": SHOW}, drop_in_threshold_minutes=THRESHOLD))
         card = _FindResult(deps, SHOW, get_event(conn, "west", "1"), saved=False)
         edits = []
 

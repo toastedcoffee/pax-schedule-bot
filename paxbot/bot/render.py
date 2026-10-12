@@ -5,6 +5,7 @@ a unit test rather than a production mystery.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence, Set as AbstractSet
 from datetime import date
 from zoneinfo import ZoneInfo
 
@@ -30,6 +31,7 @@ FOOTER_MAX = 400
 MORE_SUFFIX_MAX = 16
 EMBED_DESCRIPTION_MAX = 4096
 EMBED_FIELD_VALUE_MAX = 1024
+# Discord's cap of 25 options per select menu; every *_options builder slices to it.
 SELECT_OPTION_MAX = 25
 SELECT_LABEL_MAX = 100
 AUTOCOMPLETE_LABEL_MAX = 100
@@ -367,3 +369,57 @@ def saved_embed(state: SavedState, threshold_minutes: int) -> discord.Embed:
             inline=False,
         )
     return embed
+
+
+# ---- /setup -----------------------------------------------------------
+
+# A select option's description is capped at 100 characters too - the same
+# number as SELECT_LABEL_MAX above, but a different limit.
+SELECT_DESCRIPTION_MAX = 100
+
+
+def show_options(shows: Sequence[Show], followed: AbstractSet[str],
+                 with_data: AbstractSet[str]) -> list[discord.SelectOption]:
+    """One option per configured show, soonest first, capped at Discord's 25.
+
+    A show with no synced events is still offered - an admin may well be
+    configuring December's show in November - but it says so, because such a
+    show cannot become the active one until it has data.
+    """
+    ordered = sorted(shows, key=lambda s: (s.start_date, s.slug))
+    options = []
+    for show in ordered[:SELECT_OPTION_MAX]:
+        note = "" if show.slug in with_data else " — no schedule data yet"
+        span = f"{show.start_date:%b %d} – {show.end_date:%b %d, %Y}"
+        options.append(discord.SelectOption(
+            label=_clip(show.name, SELECT_LABEL_MAX),
+            value=show.slug,
+            description=_clip(f"{span}{note}", SELECT_DESCRIPTION_MAX),
+            default=show.slug in followed,
+        ))
+    return options
+
+
+def setup_embed(shows: Sequence[Show], followed: AbstractSet[str] | None,
+                active: Show | None) -> discord.Embed:
+    """State both facts an admin needs: what is followed, and what is showing.
+
+    The two follow modes are spelled out in words because they differ in a way
+    that is invisible otherwise: a guild that has never chosen picks up shows
+    added to shows.toml later, and a guild that has chosen does not. Conflating
+    them is how a server silently misses the next convention.
+    """
+    if followed is None:
+        following = "**every show**, including any added later"
+    else:
+        names = [s.name for s in shows if s.slug in followed]
+        following = "exactly " + (", ".join(names) if names else "(none)")
+    showing = active.name if active else "nothing yet — no show has schedule data"
+    return discord.Embed(
+        title="Which shows does this server follow?",
+        description=(
+            f"**Following:** {following}\n"
+            f"**Showing now:** {showing}\n\n"
+            "Pick shows below, or use **Follow every show** to keep tracking "
+            "whichever show is next, including ones added later."),
+    )
