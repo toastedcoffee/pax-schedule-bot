@@ -185,3 +185,20 @@ def test_saved_show_menu_skips_slugs_no_longer_in_config():
 def test_saved_show_menu_narrows_by_name_or_slug():
     assert [c.value for c in commands.saved_show_choices(
         ("east", "west"), DAY_MENU_CONFIG, " We")] == ["west"]
+
+
+def test_no_show_message_says_to_wait_when_nothing_has_synced():
+    """A fresh install before its first sync: waiting is the right advice."""
+    message = commands.no_show_message(False)
+    assert "No schedule data yet" in message
+    assert "not following any shows" not in message
+
+
+def test_no_show_message_blames_the_follow_set_when_other_shows_have_data():
+    """The sync already happened, so telling this server to wait is wrong -
+    only an admin changing the follow set can fix it."""
+    message = commands.no_show_message(True)
+    assert message.startswith(
+        "This server is not following any shows with a published schedule.")
+    assert "/setup" in message
+    assert "No schedule data yet" not in message

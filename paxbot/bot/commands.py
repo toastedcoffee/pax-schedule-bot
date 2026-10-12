@@ -111,14 +111,30 @@ def saved_show_choices(slugs: Sequence[str], config: Config,
 
 DAY_HELP = "A show day: Saturday, Sat, or 2026-09-05"
 
-NO_SHOW_MESSAGE = (
+NOTHING_SYNCED_MESSAGE = (
     "No schedule data yet — the bot syncs shortly after starting. "
     "If this lasts, an admin should check the logs, or run `/setup` to pick "
     "a show that has published its schedule.")
 
+NO_FOLLOWED_SHOW_MESSAGE = (
+    "This server is not following any shows with a published schedule. "
+    "An admin can change which shows this server follows with `/setup`.")
 
-async def _say_no_show(interaction: discord.Interaction) -> None:
-    await interaction.response.send_message(NO_SHOW_MESSAGE, ephemeral=True)
+
+def no_show_message(any_show_has_data: bool) -> str:
+    """What to say when resolve_show finds nothing, by which case it is.
+
+    Pure so the wording is testable without a Discord interaction. The two
+    cases need different advice: once some other show has synced, telling
+    this server to wait for a sync sends an admin to the logs over a
+    follow set only /setup can change.
+    """
+    return NO_FOLLOWED_SHOW_MESSAGE if any_show_has_data else NOTHING_SYNCED_MESSAGE
+
+
+async def _say_no_show(interaction: discord.Interaction, deps: BotDeps) -> None:
+    await interaction.response.send_message(
+        no_show_message(bool(shows_with_data(deps.conn))), ephemeral=True)
 
 
 def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
@@ -157,7 +173,7 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
                        category: str | None = None):
         show = deps.resolve_show(interaction.guild_id)
         if show is None:
-            await _say_no_show(interaction)
+            await _say_no_show(interaction, deps)
             return
         filters = default_filters(deps.conn, show, deps.now())
         if day:
@@ -220,7 +236,7 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
                    day: str | None = None):
         show = deps.resolve_show(interaction.guild_id)
         if show is None:
-            await _say_no_show(interaction)
+            await _say_no_show(interaction, deps)
             return
         event = get_event(deps.conn, show.slug, query)
         if event is None:
@@ -302,7 +318,7 @@ def setup_commands(tree: app_commands.CommandTree, deps: BotDeps) -> None:
                     ephemeral=True)
                 return
         if chosen is None:
-            await _say_no_show(interaction)
+            await _say_no_show(interaction, deps)
             return
         only = None
         if day:
