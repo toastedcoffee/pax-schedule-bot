@@ -77,7 +77,7 @@ in Portainer, redeploy with **Re-pull image** on).
 same image and data):
 
     docker compose run --rm paxbot sync --all
-    docker compose run --rm paxbot list --day 2026-09-04 --category Panels
+    docker compose run --rm paxbot list --show west --day 2026-09-04 --category Panels
 
 **Build from source** instead of pulling the published image — for example to
 test a change before it merges:
@@ -132,10 +132,15 @@ No Docker. Requires Python 3.11+.
 script is declared, but an editable install does not reliably put it on your
 PATH; `python -m paxbot` always works regardless:
 
-    python -m paxbot sync --all                        # fetch every show
+    python -m paxbot sync                              # fetch every show
+    python -m paxbot sync --all                        # the same, spelled out
     python -m paxbot sync --show west                  # fetch one show
-    python -m paxbot list --day 2026-09-04              # list a day
-    python -m paxbot list --day 2026-09-04 --category Panels
+    python -m paxbot list --show west --day 2026-09-04  # list a day
+    python -m paxbot list --show west --day 2026-09-04 --category Panels
+
+`sync` with no arguments syncs every show in the config, which is what `--all`
+asks for explicitly; pass `--show` to sync just one. `list` always needs a
+`--show`, since an instance can serve any set of shows.
 
 By default the database is `paxbot.db` in the current directory and the show
 config is the `shows.toml` shipped with the repo. To find real category names

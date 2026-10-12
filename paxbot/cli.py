@@ -55,16 +55,19 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sync = sub.add_parser("sync", help="fetch the schedule and update the store")
-    sync.add_argument("--show", default="west")
-    sync.add_argument("--all", action="store_true",
-                      help="sync every show in the config, not just one")
+    # Mutually exclusive, because `sync --all --show x` used to sync everything
+    # and ignore --show - a typo obeyed instead of refused.
+    target = sync.add_mutually_exclusive_group()
+    target.add_argument("--show", default=None)
+    target.add_argument("--all", action="store_true",
+                        help="sync every show in the config (also the default)")
     sync.add_argument("--db", default=None)
     sync.add_argument("--config", default=None)
 
     listing = sub.add_parser("list", help="list events for a day")
     listing.add_argument("--day", required=True, help="YYYY-MM-DD")
     listing.add_argument("--category")
-    listing.add_argument("--show", default="west")
+    listing.add_argument("--show", required=True)
     listing.add_argument("--db", default=None)
     listing.add_argument("--config", default=None)
 
@@ -89,10 +92,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"failed to load config {config_path}: {exc}", file=sys.stderr)
         return 2
 
-    # --all syncs every show in the config, so it must not require the
-    # --show default ("west") to exist - retiring PAXBOT_SHOW means an
-    # instance can serve any set of shows, including ones with no "west".
-    sync_all = args.command == "sync" and getattr(args, "all", False)
+    # No --show means sync every configured show, exactly as --all does. A
+    # hardcoded "west" default was wrong once an instance could serve any set
+    # of shows, and bare `paxbot sync` is the first command run on a fresh
+    # install - nothing has data yet, so neither a required --show nor an
+    # active-show default could work there. --all remains the explicit
+    # spelling of the same thing.
+    sync_all = args.command == "sync" and args.show is None
 
     show = None
     if not sync_all:
