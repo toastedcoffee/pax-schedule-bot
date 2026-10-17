@@ -18,3 +18,13 @@ api_key    = "bf9cc1a9-09d0-4bf7-9c13-96d85fe03f61"
 timezone   = "America/New_York"
 start_date = 2026-03-26
 end_date   = 2026-03-29
+
+# Unplugged's schedule page lives under /philly/, so base_url includes it -
+# scripts/find_api_key.py appends /en-us/schedule.html to this.
+[shows.unplugged-2026]
+name       = "PAX Unplugged 2026"
+base_url   = "https://unplugged.paxsite.com/philly"
+api_key    = "50cbfcc3-af7e-4089-892e-004fceeb57ef"
+timezone   = "America/New_York"
+start_date = 2026-12-04
+end_date   = 2026-12-06
